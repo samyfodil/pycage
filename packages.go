@@ -120,28 +120,35 @@ func (s *Sandbox) InstallWheel(wheel []byte) (WheelInfo, error) {
 	}
 	callCtx, cancel := context.WithTimeout(context.Background(), s.config.Timeout)
 	defer cancel()
-	values, err := s.inst.CallExport(callCtx, componentInterface, "install-modules", string(payload))
+	if err := s.installModulesLocked(callCtx, payload); err != nil {
+		return WheelInfo{}, err
+	}
+	return info, nil
+}
+
+func (s *Sandbox) installModulesLocked(ctx context.Context, payload []byte) error {
+	values, err := s.inst.CallExport(ctx, componentInterface, "install-modules", string(payload))
 	if err != nil {
 		_ = s.closeLocked(context.Background())
-		return WheelInfo{}, fmt.Errorf("pycage: install wheel modules: %w", err)
+		return fmt.Errorf("pycage: install wheel modules: %w", err)
 	}
 	if len(values) != 1 {
-		return WheelInfo{}, fmt.Errorf("pycage: install wheel modules returned %d values, want 1", len(values))
+		return fmt.Errorf("pycage: install wheel modules returned %d values, want 1", len(values))
 	}
 	response, ok := values[0].(string)
 	if !ok {
-		return WheelInfo{}, fmt.Errorf("pycage: install wheel modules returned %T, want string", values[0])
+		return fmt.Errorf("pycage: install wheel modules returned %T, want string", values[0])
 	}
 	var status struct {
 		Error string `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(response), &status); err != nil {
-		return WheelInfo{}, fmt.Errorf("pycage: decode module installation result: %w", err)
+		return fmt.Errorf("pycage: decode module installation result: %w", err)
 	}
 	if status.Error != "" {
-		return WheelInfo{}, fmt.Errorf("pycage: guest rejected modules: %s", status.Error)
+		return fmt.Errorf("pycage: guest rejected modules: %s", status.Error)
 	}
-	return info, nil
+	return nil
 }
 
 func wheelModuleName(name string) (module string, isPackage, ok bool) {

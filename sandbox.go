@@ -31,6 +31,7 @@ type Config struct {
 	MemoryLimitBytes    uint64
 	RuntimeMode         RuntimeMode
 	CompilationCacheDir string
+	AllowNetwork        bool
 }
 
 // RuntimeMode selects Wazy's execution backend. The zero value uses the native
@@ -51,6 +52,7 @@ type Engine struct {
 	runtime wazy.Runtime
 	cache   *component.CompileCache
 	native  wazy.CompilationCache
+	pypi    *pypiDownloader
 	config  Config
 	closed  bool
 }
@@ -118,10 +120,15 @@ func NewEngine(ctx context.Context, config Config) (*Engine, error) {
 		}
 		runtimeConfig = runtimeConfig.WithCompilationCache(nativeCache)
 	}
+	var pypi *pypiDownloader
+	if config.AllowNetwork {
+		pypi = newPyPIDownloader()
+	}
 	return &Engine{
 		runtime: wazy.NewRuntimeWithConfig(ctx, runtimeConfig),
 		cache:   component.NewCompileCache(),
 		native:  nativeCache,
+		pypi:    pypi,
 		config:  config,
 	}, nil
 }
@@ -154,7 +161,10 @@ func (e *Engine) NewSandbox(ctx context.Context) (*Sandbox, error) {
 	}
 
 	fs := map[string][]byte{}
-	options := component.WithWASI(component.WASIConfig{FS: fs})
+	options := component.WithWASI(component.WASIConfig{
+		FS:       fs,
+		AllowTCP: e.config.AllowNetwork,
+	})
 	options = append(options, component.WithCompileCache(e.cache))
 	inst, err := component.Instantiate(ctx, e.runtime, embeddedGuest, options...)
 	if err != nil {

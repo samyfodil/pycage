@@ -481,7 +481,8 @@ func (w *wasiFS) fsDirRemove(path string) *uint32 {
 
 // fsRename moves oldPath to newPath (rename-at), whether it is a file or a
 // directory subtree. Returns nil on success, wasiErrorCodeNoEntry if oldPath
-// does not exist, or wasiErrorCodeExist if newPath is already occupied.
+// does not exist. Like POSIX rename, moving a file over an existing file
+// atomically replaces the destination.
 func (w *wasiFS) fsRename(oldPath, newPath string) *uint32 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -489,8 +490,8 @@ func (w *wasiFS) fsRename(oldPath, newPath string) *uint32 {
 		return nil
 	}
 	if content, isFile := w.files[oldPath]; isFile {
-		if _, exists := w.files[newPath]; exists || w.isDirLocked(newPath) {
-			c := uint32(wasiErrorCodeExist)
+		if w.isDirLocked(newPath) {
+			c := uint32(wasiErrorCodeIsDirectory)
 			return &c
 		}
 		delete(w.files, oldPath)
@@ -1443,6 +1444,25 @@ func wasiFilesystemOptions(fs *wasiFS, sockets *wasiSockets) []Option {
 		return []abi.Value{abi.ResultValue{IsErr: false, Payload: handle}}, nil
 	}
 
+	// sync implements [method]descriptor.sync(self: borrow<descriptor>) ->
+	// result<_, error-code>. The filesystem is memory-backed and every write is
+	// committed immediately, so a successful no-op has the required durability
+	// semantics. CPython's zip installer calls fsync before atomically moving an
+	// extracted wheel file into place.
+	syncDescriptor := func(_ context.Context, args []abi.Value) ([]abi.Value, error) {
+		if len(args) != 1 {
+			return nil, fmt.Errorf("[method]descriptor.sync: expected 1 arg (self), got %d", len(args))
+		}
+		selfRep, ok := args[0].(uint32)
+		if !ok {
+			return nil, fmt.Errorf("[method]descriptor.sync: self: expected uint32 rep, got %T", args[0])
+		}
+		if _, err := fs.descNode(selfRep); err != nil {
+			return nil, fmt.Errorf("[method]descriptor.sync: %w", err)
+		}
+		return []abi.Value{abi.ResultValue{IsErr: false, Payload: nil}}, nil
+	}
+
 	// streamRead implements both [method]input-stream.read and
 	// [method]input-stream.blocking-read. For an fs/stdin-backed stream,
 	// every byte is already resident in memory (no real I/O to actually
@@ -1577,6 +1597,7 @@ func wasiFilesystemOptions(fs *wasiFS, sockets *wasiSockets) []Option {
 	readViaStreamFD, readViaStreamResolve := wasiReadViaStreamSig()
 	writeViaStreamFD, writeViaStreamResolve := wasiWriteViaStreamSig()
 	appendViaStreamFD, appendViaStreamResolve := wasiAppendViaStreamSig()
+	syncFD, syncResolve := wasiDescriptorResultSig()
 	metadataHashFD, metadataHashResolve := wasiMetadataHashSig()
 	metadataHashAtFD, metadataHashAtResolve := wasiMetadataHashAtSig()
 	inReadFD, inReadResolve := wasiInputStreamReadSig()
@@ -1619,6 +1640,7 @@ func wasiFilesystemOptions(fs *wasiFS, sockets *wasiSockets) []Option {
 		withImportCustom(wasiIfaceFilesystemTypes, "[method]descriptor.read-via-stream", readViaStream, readViaStreamFD, readViaStreamResolve),
 		withImportCustom(wasiIfaceFilesystemTypes, "[method]descriptor.write-via-stream", writeViaStream, writeViaStreamFD, writeViaStreamResolve),
 		withImportCustom(wasiIfaceFilesystemTypes, "[method]descriptor.append-via-stream", appendViaStream, appendViaStreamFD, appendViaStreamResolve),
+		withImportCustom(wasiIfaceFilesystemTypes, "[method]descriptor.sync", syncDescriptor, syncFD, syncResolve),
 		withImportCustom(wasiIfaceFilesystemTypes, "[method]descriptor.metadata-hash", metadataHash, metadataHashFD, metadataHashResolve),
 		withImportCustom(wasiIfaceFilesystemTypes, "[method]descriptor.metadata-hash-at", metadataHashAt, metadataHashAtFD, metadataHashAtResolve),
 
@@ -1964,6 +1986,20 @@ func wasiAppendViaStreamSig() (binary.FuncDesc, abi.Resolver) {
 	okRef := tbl.add(binary.OwnDesc{ResourceType: wasiOutputStreamResType})
 	errRef := wasiErrorCodeType(tbl)
 	resultRef := tbl.add(binary.ResultDesc{Ok: &okRef, Err: &errRef})
+	fd := binary.FuncDesc{
+		Params:  []binary.FuncParam{{Name: "self", Type: selfRef}},
+		Results: binary.FuncResults{Unnamed: &resultRef},
+	}
+	return fd, tbl.resolver()
+}
+
+// wasiDescriptorResultSig builds the common signature for descriptor methods
+// taking only self and returning result<_, error-code>.
+func wasiDescriptorResultSig() (binary.FuncDesc, abi.Resolver) {
+	tbl := &typeTable{}
+	selfRef := tbl.add(binary.BorrowDesc{ResourceType: wasiDescriptorResType})
+	errRef := wasiErrorCodeType(tbl)
+	resultRef := tbl.add(binary.ResultDesc{Err: &errRef})
 	fd := binary.FuncDesc{
 		Params:  []binary.FuncParam{{Name: "self", Type: selfRef}},
 		Results: binary.FuncResults{Unnamed: &resultRef},

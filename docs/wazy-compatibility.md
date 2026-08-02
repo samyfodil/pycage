@@ -12,9 +12,11 @@ changes for the generated CPython component:
 4. Account for instance exports that append aliases to the component instance
    index space.
 
-The CPython file path also reaches
-`wasi:filesystem/types.descriptor.get-flags`, so the vendored WASI filesystem
-implements that method for its in-memory descriptors.
+The CPython and pip file paths also reach
+`wasi:filesystem/types.descriptor.get-flags` and `descriptor.sync`, so the
+vendored WASI filesystem implements both for its in-memory descriptors. Its
+`rename-at` implementation also follows POSIX file replacement semantics,
+which pip uses when atomically updating wheel metadata.
 
 The changes are contained in:
 

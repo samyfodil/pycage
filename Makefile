@@ -1,4 +1,4 @@
-.PHONY: all build guest test bench clean
+.PHONY: all build bindings guest test bench clean
 
 GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -8,7 +8,13 @@ all: build
 	python3 -m venv .venv
 	.venv/bin/pip install componentize-py==0.19.1
 
-guest: .venv/bin/componentize-py
+bindings: .venv/bin/componentize-py
+	rm -rf $(CURDIR)/.cache/componentize-bindings
+	.venv/bin/componentize-py -d wit -w python-sandbox bindings .cache/componentize-bindings
+	cp -R .cache/componentize-bindings/. guest/
+	sed -i '$${/^$$/d;}' guest/wit_world/exports/__init__.py
+
+guest: bindings
 	.venv/bin/componentize-py -d wit -w python-sandbox componentize -p guest app -o guest/app.wasm
 
 build: guest

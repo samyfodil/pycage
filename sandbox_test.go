@@ -125,6 +125,44 @@ func TestSandboxFilesAndPureWheel(t *testing.T) {
 	}
 }
 
+func TestEmbeddedPipInstallsWheelAtRuntime(t *testing.T) {
+	ctx := context.Background()
+	config := DefaultConfig()
+	config.RuntimeMode = RuntimeModeInterpreter
+	config.Timeout = 30 * time.Second
+	sandbox, err := New(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sandbox.Close(ctx) })
+
+	const wheelPath = "/packages/greeter-1.0.0-py3-none-any.whl"
+	if err := sandbox.WriteFile(wheelPath, testWheel(t)); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := sandbox.PipInstall(ctx, "--no-index", "--no-deps", wheelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installed.ExitCode != 0 || installed.Error != "" {
+		t.Fatalf("pip result = %+v", installed)
+	}
+	result, err := sandbox.RunCode(ctx, "import greeter; greeter.hello('pip')")
+	if err != nil || result.Error != nil {
+		t.Fatalf("import installed wheel: python error=%+v err=%v", result.Error, err)
+	}
+	if result.Text() != "'Hello, pip!'" {
+		t.Fatalf("installed package result = %q", result.Text())
+	}
+	resource, err := sandbox.RunCode(ctx, "greeter.resource()")
+	if err != nil || resource.Error != nil {
+		t.Fatalf("read installed package resource: python error=%+v err=%v", resource.Error, err)
+	}
+	if resource.Text() != "'package data works'" {
+		t.Fatalf("installed package resource = %q", resource.Text())
+	}
+}
+
 func TestSandboxTimeoutRetiresInstance(t *testing.T) {
 	ctx := context.Background()
 	config := DefaultConfig()
@@ -149,9 +187,11 @@ func testWheel(t *testing.T) []byte {
 	var buffer bytes.Buffer
 	writer := zip.NewWriter(&buffer)
 	files := map[string]string{
-		"greeter.py":                       "def hello(name):\n    return f'Hello, {name}!'\n",
+		"greeter/__init__.py":              "from importlib.resources import files\ndef hello(name):\n    return f'Hello, {name}!'\ndef resource():\n    return files(__package__).joinpath('message.txt').read_text().strip()\n",
+		"greeter/message.txt":              "package data works\n",
 		"greeter-1.0.0.dist-info/WHEEL":    "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
 		"greeter-1.0.0.dist-info/METADATA": "Metadata-Version: 2.1\nName: greeter\nVersion: 1.0.0\n",
+		"greeter-1.0.0.dist-info/RECORD":   "",
 	}
 	for name, contents := range files {
 		file, err := writer.Create(name)

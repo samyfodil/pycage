@@ -24,10 +24,13 @@ func main() {
 	memory := flags.Uint64("memory", 256<<20, "memory limit in bytes")
 	runtimeMode := flags.String("runtime", "compiler", "Wazy runtime: compiler or interpreter")
 	cacheDir := flags.String("cache-dir", defaultCacheDir(), "native compilation cache directory")
+	allowNetwork := flags.Bool("network", false, "allow outbound TCP from the sandbox")
 	jsonOutput := flags.Bool("json", false, "print the complete result as JSON")
 	showTiming := flags.Bool("timing", false, "print sandbox setup and execution timings")
 	var wheels stringList
+	var requirements stringList
 	flags.Var(&wheels, "wheel", "pure-Python wheel to install (repeatable)")
+	flags.Var(&requirements, "pip", "requirement to install with embedded pip (repeatable)")
 	_ = flags.Parse(os.Args[2:])
 	if flags.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "pycage: missing Python code")
@@ -41,6 +44,7 @@ func main() {
 		MemoryLimitBytes:    *memory,
 		RuntimeMode:         pycage.RuntimeMode(*runtimeMode),
 		CompilationCacheDir: *cacheDir,
+		AllowNetwork:        *allowNetwork,
 	})
 	if err != nil {
 		fatal(err)
@@ -54,6 +58,17 @@ func main() {
 		}
 		if _, err := sandbox.InstallWheel(wheel); err != nil {
 			fatal(fmt.Errorf("install wheel %q: %w", wheelPath, err))
+		}
+	}
+	if len(requirements) > 0 {
+		result, err := sandbox.PipInstall(ctx, requirements...)
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Print(result.Stdout)
+		fmt.Fprint(os.Stderr, result.Stderr)
+		if result.ExitCode != 0 || result.Error != "" {
+			fatal(fmt.Errorf("pip failed with exit code %d: %s", result.ExitCode, result.Error))
 		}
 	}
 
@@ -94,8 +109,10 @@ Options:
   -memory 268435456 memory limit in bytes
   -runtime compiler  Wazy runtime: compiler or interpreter
   -cache-dir path     native cache (default: temporary directory)
+  -network            allow outbound TCP from the sandbox
   -timing             print setup and execution timings
   -wheel path       install a pure-Python wheel (repeatable)
+  -pip requirement  install with embedded pip (repeatable)
   -json             print structured execution JSON`)
 }
 
