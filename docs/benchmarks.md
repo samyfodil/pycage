@@ -7,6 +7,9 @@ creation, and warm cell execution:
 make bench
 ```
 
+These Go benchmarks intentionally leave `CompilationCacheDir` empty so the
+cold case measures compilation instead of a prior process's disk-cache hit.
+
 Use `-benchtime=1x` for cold benchmarks. A cold native compile is intentionally
 expensive, and repeating it mostly measures CPU throttling and garbage
 collection rather than normal application behavior.
@@ -29,6 +32,10 @@ Cold native compilation is sensitive to CPU frequency and ranged from 6.60 to
 mode took 0.39 seconds with warm file caches (1.94 seconds on its first run) and
 about 412 MB peak RSS.
 
+With the persistent native cache enabled, an empty-cache compiler run took
+13.76 seconds of setup and the identical command in a second process took
+580 ms. Python execution itself remained below 1 ms in both runs.
+
 These numbers are a diagnostic baseline, not portable performance claims.
 
 ## Bottleneck
@@ -45,7 +52,11 @@ compile-cache miss path. Python evaluation is not the cold-start bottleneck.
 
 ## Choosing a mode
 
-- One-shot CLI: use `-runtime interpreter` to skip native compilation.
+- CLI: keep the default compiler mode. The command stores Wazy's native
+  compilation cache beneath the system temporary directory.
+- Use `-runtime interpreter` explicitly only for a disposable invocation where
+  an empty-cache cold start matters more than execution speed. Interpreter mode
+  is never selected automatically.
 - Service or agent: keep compiler mode and reuse one `pycage.Engine`. The first
   sandbox pays compilation; later isolated sandboxes reuse it.
 - Reusing one stateful `Sandbox` is fastest when isolation between calls is not

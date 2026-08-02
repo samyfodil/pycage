@@ -38,8 +38,13 @@ make build
 ./bin/pycage run '6 * 7'
 ```
 
-Native compilation makes repeated execution fast but is expensive for a
-one-shot process. Select Wazy's interpreter when cold-start latency matters:
+The CLI runs Wazy's native compiler by default and persists compiled core Wasm
+modules under `${TMPDIR:-/tmp}/pycage/wazy-native`. The cache is content- and
+Wazy-version-keyed, so subsequent processes skip native compilation. Override
+its location with `-cache-dir`.
+
+Interpreter mode remains an explicit opt-in when an empty-cache cold start
+matters more than warm execution speed:
 
 ```console
 ./bin/pycage run -runtime interpreter -timing 'print("hello"); 6 * 7'

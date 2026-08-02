@@ -27,9 +27,10 @@ var ErrClosed = errors.New("pycage: sandbox is closed")
 // Config controls host-enforced sandbox limits. Network access and host
 // filesystem access are always denied by default.
 type Config struct {
-	Timeout          time.Duration
-	MemoryLimitBytes uint64
-	RuntimeMode      RuntimeMode
+	Timeout             time.Duration
+	MemoryLimitBytes    uint64
+	RuntimeMode         RuntimeMode
+	CompilationCacheDir string
 }
 
 // RuntimeMode selects Wazy's execution backend. The zero value uses the native
@@ -49,6 +50,7 @@ type Engine struct {
 	mu      sync.Mutex
 	runtime wazy.Runtime
 	cache   *component.CompileCache
+	native  wazy.CompilationCache
 	config  Config
 	closed  bool
 }
@@ -108,9 +110,18 @@ func NewEngine(ctx context.Context, config Config) (*Engine, error) {
 		WithCoreFeatures(api.CoreFeaturesV2 | api.CoreFeatureExtendedConst).
 		WithCloseOnContextDone(true).
 		WithMemoryLimitPages(pages)
+	var nativeCache wazy.CompilationCache
+	if config.CompilationCacheDir != "" {
+		nativeCache, err = wazy.NewCompilationCacheWithDir(config.CompilationCacheDir)
+		if err != nil {
+			return nil, fmt.Errorf("pycage: create native compilation cache: %w", err)
+		}
+		runtimeConfig = runtimeConfig.WithCompilationCache(nativeCache)
+	}
 	return &Engine{
 		runtime: wazy.NewRuntimeWithConfig(ctx, runtimeConfig),
 		cache:   component.NewCompileCache(),
+		native:  nativeCache,
 		config:  config,
 	}, nil
 }
@@ -162,7 +173,13 @@ func (e *Engine) Close(ctx context.Context) error {
 		return nil
 	}
 	e.closed = true
-	return errors.Join(e.cache.Close(ctx), e.runtime.Close(ctx))
+	componentErr := e.cache.Close(ctx)
+	runtimeErr := e.runtime.Close(ctx)
+	var nativeErr error
+	if e.native != nil {
+		nativeErr = e.native.Close(ctx)
+	}
+	return errors.Join(componentErr, runtimeErr, nativeErr)
 }
 
 // RunCode evaluates one cell. Variables and imports remain available to later

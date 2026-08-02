@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ func main() {
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum execution time")
 	memory := flags.Uint64("memory", 256<<20, "memory limit in bytes")
 	runtimeMode := flags.String("runtime", "compiler", "Wazy runtime: compiler or interpreter")
+	cacheDir := flags.String("cache-dir", defaultCacheDir(), "native compilation cache directory")
 	jsonOutput := flags.Bool("json", false, "print the complete result as JSON")
 	showTiming := flags.Bool("timing", false, "print sandbox setup and execution timings")
 	var wheels stringList
@@ -35,9 +37,10 @@ func main() {
 	ctx := context.Background()
 	setupStarted := time.Now()
 	sandbox, err := pycage.New(ctx, pycage.Config{
-		Timeout:          *timeout,
-		MemoryLimitBytes: *memory,
-		RuntimeMode:      pycage.RuntimeMode(*runtimeMode),
+		Timeout:             *timeout,
+		MemoryLimitBytes:    *memory,
+		RuntimeMode:         pycage.RuntimeMode(*runtimeMode),
+		CompilationCacheDir: *cacheDir,
 	})
 	if err != nil {
 		fatal(err)
@@ -90,9 +93,14 @@ Options:
   -timeout 5s       maximum execution time
   -memory 268435456 memory limit in bytes
   -runtime compiler  Wazy runtime: compiler or interpreter
+  -cache-dir path     native cache (default: temporary directory)
   -timing             print setup and execution timings
   -wheel path       install a pure-Python wheel (repeatable)
   -json             print structured execution JSON`)
+}
+
+func defaultCacheDir() string {
+	return filepath.Join(os.TempDir(), "pycage", "wazy-native")
 }
 
 type stringList []string
