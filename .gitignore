@@ -1,0 +1,8 @@
+/bin/
+/dist/
+/.venv/
+/.cache/
+/guest/app.wasm
+*.tmp
+__pycache__/
+*.py[cod]

@@ -1,0 +1,4 @@
+github.com/samyfodil/wazy v0.0.0-20260723051823-a858c1250415 h1:bBBZtxq6jRmQrYPxzjDbqbiz3LgbzUxUNEF9z3R1eJ8=
+github.com/samyfodil/wazy v0.0.0-20260723051823-a858c1250415/go.mod h1:jpXcoooWi9CQPnN1fzwt/A0w3AMRn/s6PQDunF55SIM=
+golang.org/x/sys v0.44.0 h1:ildZl3J4uzeKP07r2F++Op7E9B29JRUy+a27EibtBTQ=
+golang.org/x/sys v0.44.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=

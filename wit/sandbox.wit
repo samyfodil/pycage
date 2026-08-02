@@ -1,0 +1,16 @@
+package pycage:sandbox@0.1.0;
+
+interface code-interpreter {
+    /// Execute one Python cell and return a JSON-encoded execution result.
+    run-code: func(code: string) -> string;
+
+    /// Add validated pure-Python modules encoded as JSON.
+    install-modules: func(modules: string) -> string;
+
+    /// Clear the persistent Python globals used by prior cells.
+    reset: func() -> string;
+}
+
+world python-sandbox {
+    export code-interpreter;
+}
