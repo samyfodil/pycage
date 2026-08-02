@@ -29,6 +29,28 @@ var ErrClosed = errors.New("pycage: sandbox is closed")
 type Config struct {
 	Timeout          time.Duration
 	MemoryLimitBytes uint64
+	RuntimeMode      RuntimeMode
+}
+
+// RuntimeMode selects Wazy's execution backend. The zero value uses the native
+// compiler. Interpreter mode trades execution speed for lower cold-start cost.
+type RuntimeMode string
+
+const (
+	RuntimeModeCompiler    RuntimeMode = "compiler"
+	RuntimeModeInterpreter RuntimeMode = "interpreter"
+)
+
+// Engine owns a Wazy runtime and compiled-component cache. Reuse an Engine to
+// avoid decoding and compiling the embedded CPython component for every
+// sandbox. Each sandbox still gets independent Python state and a separate
+// in-memory filesystem.
+type Engine struct {
+	mu      sync.Mutex
+	runtime wazy.Runtime
+	cache   *component.CompileCache
+	config  Config
+	closed  bool
 }
 
 func DefaultConfig() Config {
@@ -41,16 +63,59 @@ func DefaultConfig() Config {
 // Sandbox is one persistent Python context and isolated in-memory filesystem.
 // Calls are serialized because a Python context is stateful.
 type Sandbox struct {
-	mu      sync.Mutex
-	runtime wazy.Runtime
-	inst    *component.Instance
-	fs      map[string][]byte
-	config  Config
-	closed  bool
+	mu     sync.Mutex
+	inst   *component.Instance
+	fs     map[string][]byte
+	config Config
+	engine *Engine
+	owned  bool
+	closed bool
 }
 
 // New creates a sandbox backed by the embedded componentized CPython guest.
 func New(ctx context.Context, config Config) (*Sandbox, error) {
+	engine, err := NewEngine(ctx, config)
+	if err != nil {
+		return nil, err
+	}
+	sandbox, err := engine.NewSandbox(ctx)
+	if err != nil {
+		_ = engine.Close(ctx)
+		return nil, err
+	}
+	sandbox.owned = true
+	return sandbox, nil
+}
+
+// NewEngine creates a reusable Wazy runtime. Component compilation happens
+// lazily when the first sandbox is created and is reused by later sandboxes.
+func NewEngine(ctx context.Context, config Config) (*Engine, error) {
+	config, pages, err := normalizeConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
+	var runtimeConfig wazy.RuntimeConfig
+	switch config.RuntimeMode {
+	case "", RuntimeModeCompiler:
+		runtimeConfig = wazy.NewRuntimeConfig()
+	case RuntimeModeInterpreter:
+		runtimeConfig = wazy.NewRuntimeConfigInterpreter()
+	default:
+		return nil, fmt.Errorf("pycage: unknown runtime mode %q", config.RuntimeMode)
+	}
+	runtimeConfig = runtimeConfig.
+		WithCoreFeatures(api.CoreFeaturesV2 | api.CoreFeatureExtendedConst).
+		WithCloseOnContextDone(true).
+		WithMemoryLimitPages(pages)
+	return &Engine{
+		runtime: wazy.NewRuntimeWithConfig(ctx, runtimeConfig),
+		cache:   component.NewCompileCache(),
+		config:  config,
+	}, nil
+}
+
+func normalizeConfig(config Config) (Config, uint32, error) {
 	if config.Timeout <= 0 {
 		config.Timeout = DefaultConfig().Timeout
 	}
@@ -63,23 +128,41 @@ func New(ctx context.Context, config Config) (*Sandbox, error) {
 		pages++
 	}
 	if pages > uint64(^uint32(0)) {
-		return nil, fmt.Errorf("pycage: memory limit is too large")
+		return Config{}, 0, fmt.Errorf("pycage: memory limit is too large")
+	}
+	return config, uint32(pages), nil
+}
+
+// NewSandbox creates an isolated CPython instance. The Engine's decoded and
+// compiled component is reused, but no Python globals or files are shared.
+func (e *Engine) NewSandbox(ctx context.Context) (*Sandbox, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return nil, ErrClosed
 	}
 
-	runtimeConfig := wazy.NewRuntimeConfig().
-		WithCoreFeatures(api.CoreFeaturesV2 | api.CoreFeatureExtendedConst).
-		WithCloseOnContextDone(true).
-		WithMemoryLimitPages(uint32(pages))
-	r := wazy.NewRuntimeWithConfig(ctx, runtimeConfig)
 	fs := map[string][]byte{}
 	options := component.WithWASI(component.WASIConfig{FS: fs})
-	inst, err := component.Instantiate(ctx, r, embeddedGuest, options...)
+	options = append(options, component.WithCompileCache(e.cache))
+	inst, err := component.Instantiate(ctx, e.runtime, embeddedGuest, options...)
 	if err != nil {
-		_ = r.Close(ctx)
 		return nil, fmt.Errorf("pycage: instantiate CPython component: %w", err)
 	}
 
-	return &Sandbox{runtime: r, inst: inst, fs: fs, config: config}, nil
+	return &Sandbox{inst: inst, fs: fs, config: e.config, engine: e}, nil
+}
+
+// Close releases the Engine's compiled component and Wazy runtime. All
+// sandboxes created by this Engine must be closed first.
+func (e *Engine) Close(ctx context.Context) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return nil
+	}
+	e.closed = true
+	return errors.Join(e.cache.Close(ctx), e.runtime.Close(ctx))
 }
 
 // RunCode evaluates one cell. Variables and imports remain available to later
@@ -164,7 +247,8 @@ func (s *Sandbox) ReadFile(name string) ([]byte, error) {
 	return append([]byte(nil), data...), nil
 }
 
-// Close releases the component and its Wazy runtime.
+// Close releases the component. A sandbox made with New also releases its
+// private Engine; sandboxes made by Engine.NewSandbox leave the Engine alive.
 func (s *Sandbox) Close(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -177,8 +261,10 @@ func (s *Sandbox) closeLocked(ctx context.Context) error {
 	}
 	s.closed = true
 	instanceErr := s.inst.Close(ctx)
-	runtimeErr := s.runtime.Close(ctx)
-	return errors.Join(instanceErr, runtimeErr)
+	if s.owned {
+		return errors.Join(instanceErr, s.engine.Close(ctx))
+	}
+	return instanceErr
 }
 
 func cleanGuestPath(name string) (string, error) {

@@ -21,7 +21,9 @@ func main() {
 	flags := flag.NewFlagSet("pycage run", flag.ExitOnError)
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum execution time")
 	memory := flags.Uint64("memory", 256<<20, "memory limit in bytes")
+	runtimeMode := flags.String("runtime", "compiler", "Wazy runtime: compiler or interpreter")
 	jsonOutput := flags.Bool("json", false, "print the complete result as JSON")
+	showTiming := flags.Bool("timing", false, "print sandbox setup and execution timings")
 	var wheels stringList
 	flags.Var(&wheels, "wheel", "pure-Python wheel to install (repeatable)")
 	_ = flags.Parse(os.Args[2:])
@@ -31,13 +33,16 @@ func main() {
 	}
 
 	ctx := context.Background()
+	setupStarted := time.Now()
 	sandbox, err := pycage.New(ctx, pycage.Config{
 		Timeout:          *timeout,
 		MemoryLimitBytes: *memory,
+		RuntimeMode:      pycage.RuntimeMode(*runtimeMode),
 	})
 	if err != nil {
 		fatal(err)
 	}
+	setupElapsed := time.Since(setupStarted)
 	defer sandbox.Close(ctx)
 	for _, wheelPath := range wheels {
 		wheel, err := os.ReadFile(wheelPath)
@@ -49,9 +54,14 @@ func main() {
 		}
 	}
 
+	executionStarted := time.Now()
 	execution, err := sandbox.RunCode(ctx, strings.Join(flags.Args(), " "))
+	executionElapsed := time.Since(executionStarted)
 	if err != nil {
 		fatal(err)
+	}
+	if *showTiming {
+		fmt.Fprintf(os.Stderr, "pycage timing: setup=%s execution=%s\n", setupElapsed, executionElapsed)
 	}
 	if *jsonOutput {
 		encoder := json.NewEncoder(os.Stdout)
@@ -79,6 +89,8 @@ func usage() {
 Options:
   -timeout 5s       maximum execution time
   -memory 268435456 memory limit in bytes
+  -runtime compiler  Wazy runtime: compiler or interpreter
+  -timing             print setup and execution timings
   -wheel path       install a pure-Python wheel (repeatable)
   -json             print structured execution JSON`)
 }

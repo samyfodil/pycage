@@ -38,11 +38,41 @@ make build
 ./bin/pycage run '6 * 7'
 ```
 
+Native compilation makes repeated execution fast but is expensive for a
+one-shot process. Select Wazy's interpreter when cold-start latency matters:
+
+```console
+./bin/pycage run -runtime interpreter -timing 'print("hello"); 6 * 7'
+```
+
+Use compiler mode (the default) in a long-running Go process and reuse an
+`Engine`, as shown below. See [the benchmark notes](docs/benchmarks.md) for the
+measured tradeoffs and profiling results.
+
 The componentized CPython guest is about 40 MB and is embedded into the Go
 binary. `guest/app.wasm`, `.venv`, and `bin` are generated locally and ignored
 by Git.
 
 ## Go API
+
+For a service or agent runtime, keep one Engine alive so component decoding and
+native compilation happen once:
+
+```go
+engine, err := pycage.NewEngine(ctx, pycage.DefaultConfig())
+if err != nil {
+    log.Fatal(err)
+}
+defer engine.Close(ctx)
+
+sandbox, err := engine.NewSandbox(ctx)
+defer sandbox.Close(ctx)
+```
+
+Each Engine-created sandbox has independent Python globals and files. Only the
+immutable decoded component and compiled native code are shared.
+
+For a single sandbox, the convenience API owns its private Engine:
 
 ```go
 ctx := context.Background()

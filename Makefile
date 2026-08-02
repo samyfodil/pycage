@@ -1,4 +1,4 @@
-.PHONY: all build guest test clean
+.PHONY: all build guest test bench clean
 
 GOCACHE := $(CURDIR)/.cache/go-build
 
@@ -17,6 +17,9 @@ build: guest
 
 test: guest
 	GOCACHE=$(GOCACHE) go test -mod=vendor ./...
+
+bench: guest
+	GOCACHE=$(GOCACHE) go test -mod=vendor -run '^$$' -bench . -benchtime=1x -benchmem .
 
 clean:
 	go clean

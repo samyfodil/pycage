@@ -9,6 +9,47 @@ import (
 	"time"
 )
 
+func TestEngineSandboxesAreIsolated(t *testing.T) {
+	ctx := context.Background()
+	config := DefaultConfig()
+	config.RuntimeMode = RuntimeModeInterpreter
+	engine, err := NewEngine(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer engine.Close(ctx)
+
+	first, err := engine.NewSandbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close(ctx)
+	second, err := engine.NewSandbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close(ctx)
+
+	if _, err := first.RunCode(ctx, "secret = 42"); err != nil {
+		t.Fatal(err)
+	}
+	result, err := second.RunCode(ctx, `globals().get("secret", "missing")`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text() != "'missing'" {
+		t.Fatalf("second sandbox observed first sandbox state: %q", result.Text())
+	}
+}
+
+func TestNewEngineRejectsUnknownRuntimeMode(t *testing.T) {
+	config := DefaultConfig()
+	config.RuntimeMode = "turbo"
+	if _, err := NewEngine(context.Background(), config); err == nil {
+		t.Fatal("expected unknown runtime mode error")
+	}
+}
+
 func TestSandboxStateResetAndErrors(t *testing.T) {
 	ctx := context.Background()
 	sandbox, err := New(ctx, DefaultConfig())
