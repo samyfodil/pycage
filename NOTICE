@@ -1,0 +1,6 @@
+pycage
+Copyright 2026 Samy Fodil
+
+This product includes WebAssembly Interface Type definitions derived from the
+Bytecode Alliance componentize-py project and WebAssembly/WASI specifications.
+Those materials are provided under the Apache License 2.0 with LLVM exception.

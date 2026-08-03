@@ -14,8 +14,27 @@ the required upstream support:
 
 It also includes real `FSConfig` mounts for Component Model WASI 0.2 plus the
 `descriptor.get-flags`, `descriptor.sync`, and `descriptor.sync-data` methods
-CPython reaches. The vendored source is an unmodified copy of that upstream
-module revision.
+CPython reaches. Pycage consumes that revision directly through `go.mod` and
+does not vendor or locally patch it.
+
+The componentized CPython socket adapter currently passes an unissued network
+resource when binding an IPv6 socket. Because urllib3 probes IPv6 with a bind
+at import time, pycage reports `socket.has_ipv6` as false until that adapter path
+is fixed. This prevents an unsupported capability from causing imports to trap;
+it does not enable guest socket binds.
+
+HTTPS uses Wazy's stock `wasi:http/outgoing-handler@0.2.0` implementation and
+Go's TLS stack because componentize-py's CPython does not ship `_ssl`. The
+current Wazy HTTP surface is sufficient for request method, URL, headers, body,
+response status, and response body. A complete requests response still needs
+these upstream WASI HTTP methods:
+
+- `wasi:http/types@0.2.0#[method]incoming-response.headers`
+- `wasi:http/types@0.2.0#[method]fields.entries`
+
+Pycage currently returns an empty `requests.Response.headers` and requests
+identity encoding so it never guesses whether an opaque response body is
+compressed.
 
 One upstream gap remains:
 

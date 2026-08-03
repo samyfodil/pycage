@@ -12,5 +12,6 @@ interface code-interpreter {
 }
 
 world python-sandbox {
+    import wasi:http/outgoing-handler@0.2.0;
     export code-interpreter;
 }

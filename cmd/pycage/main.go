@@ -25,7 +25,7 @@ func main() {
 	memory := flags.Uint64("memory", 256<<20, "memory limit in bytes")
 	runtimeMode := flags.String("runtime", "compiler", "Wazy runtime: compiler or interpreter")
 	cacheDir := flags.String("cache-dir", defaultCacheDir(), "native compilation cache directory")
-	allowNetwork := flags.Bool("network", false, "allow outbound TCP from the sandbox")
+	allowNetwork := flags.Bool("network", false, "allow outbound TCP and HTTP(S) from the sandbox")
 	jsonOutput := flags.Bool("json", false, "print the complete result as JSON")
 	showTiming := flags.Bool("timing", false, "print sandbox setup and execution timings")
 	var wheels stringList
@@ -119,7 +119,7 @@ Options:
   -memory 268435456 memory limit in bytes
   -runtime compiler  Wazy runtime: compiler or interpreter
   -cache-dir path     native cache (default: temporary directory)
-  -network            allow outbound TCP from the sandbox
+  -network            allow outbound TCP and HTTP(S) from the sandbox
   -timing             print setup and execution timings
   -wheel path       install a pure-Python wheel (repeatable)
   -pip requirement  install with embedded pip (repeatable)

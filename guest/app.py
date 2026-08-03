@@ -14,9 +14,12 @@ import importlib.metadata._text
 import importlib.util
 import json
 import os
+import socket
 import sys
 import traceback
 import types
+
+import pycage_http
 
 # WASI has no Unix user database. pip's vendored platformdirs imports getuid
 # while selecting cache paths, so provide the conventional single-user value.
@@ -26,6 +29,11 @@ if not hasattr(os, "umask"):
     os.umask = lambda mask: 0o022
 if not hasattr(os, "chmod"):
     os.chmod = lambda path, mode: None
+
+# componentize-py's WASI socket adapter currently cannot obtain the network
+# resource needed by an explicit IPv6 bind. Advertising IPv6 makes urllib3
+# probe it at import time and trap in the host instead of raising OSError.
+socket.has_ipv6 = False
 
 # pip's vendored cachecontrol uses mmap only to avoid copying a completed
 # download buffer. WASI CPython has no mmap module; bytes provide the same
@@ -139,6 +147,13 @@ def _encode_pip_result(result):
     return encoded
 
 
+def _encode_run_result(result):
+    encoded = json.dumps(result, separators=(",", ":"))
+    with open("/.pycage-run-result.json", "w", encoding="utf-8") as status:
+        status.write(encoded)
+    return encoded
+
+
 def _display(value):
     if value is None:
         return []
@@ -193,6 +208,7 @@ class CodeInterpreter(exports.CodeInterpreter):
 
         try:
             with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                pycage_http.install_requests_adapter()
                 value = _execute(code)
             result["outputs"] = _display(value)
         except BaseException as exc:
@@ -204,7 +220,7 @@ class CodeInterpreter(exports.CodeInterpreter):
 
         result["stdout"] = stdout.getvalue()
         result["stderr"] = stderr.getvalue()
-        return json.dumps(result, separators=(",", ":"))
+        return _encode_run_result(result)
 
     def install_modules(self, modules: str) -> str:
         try:

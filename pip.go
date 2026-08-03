@@ -74,20 +74,39 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 	defer cancel()
 	_ = s.fs.remove("/.pycage-pip-result.json")
 	values, err := s.inst.CallExport(callCtx, componentInterface, "install-modules", string(payload))
+	var response string
+	if mirrored, readErr := s.fs.readFile("/.pycage-pip-result.json"); readErr == nil {
+		response = string(mirrored)
+		_ = s.fs.remove("/.pycage-pip-result.json")
+	}
 	if err != nil {
+		if response != "" {
+			var result PipResult
+			if decodeErr := json.Unmarshal([]byte(response), &result); decodeErr != nil {
+				return PipResult{}, fmt.Errorf("pycage: decode mirrored pip result: %w", decodeErr)
+			}
+			if result.ExitCode == 0 && result.Error == "" {
+				if finalizeErr := s.finalizePipTargetLocked(callCtx); finalizeErr != nil {
+					return result, finalizeErr
+				}
+				if restartErr := s.restartLocked(callCtx); restartErr != nil {
+					return result, restartErr
+				}
+			}
+			return result, nil
+		}
 		_ = s.closeLocked(context.Background())
 		return PipResult{}, fmt.Errorf("pycage: pip install: %w", err)
 	}
 	if len(values) != 1 {
 		return PipResult{}, fmt.Errorf("pycage: pip install returned %d values, want 1", len(values))
 	}
-	response, ok := values[0].(string)
-	if !ok {
-		return PipResult{}, fmt.Errorf("pycage: pip install returned %T, want string", values[0])
-	}
-	if mirrored, readErr := s.fs.readFile("/.pycage-pip-result.json"); readErr == nil {
-		response = string(mirrored)
-		_ = s.fs.remove("/.pycage-pip-result.json")
+	if response == "" {
+		var ok bool
+		response, ok = values[0].(string)
+		if !ok {
+			return PipResult{}, fmt.Errorf("pycage: pip install returned %T, want string", values[0])
+		}
 	}
 	var result PipResult
 	if err := json.Unmarshal([]byte(response), &result); err != nil {

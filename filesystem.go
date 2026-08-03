@@ -89,6 +89,7 @@ type mountedFS struct {
 
 type sandboxFilesystem struct {
 	mounts  []mountedFS
+	config  wazy.FSConfig
 	cleanup func() error
 }
 
@@ -139,7 +140,7 @@ func newSandboxFilesystem(factory FileSystemFactory) (*sandboxFilesystem, wazy.F
 	sort.SliceStable(mounts, func(left, right int) bool {
 		return len(mounts[left].guestPath) > len(mounts[right].guestPath)
 	})
-	return &sandboxFilesystem{mounts: mounts, cleanup: cleanup}, config, nil
+	return &sandboxFilesystem{mounts: mounts, config: config, cleanup: cleanup}, config, nil
 }
 
 func cleanMountPath(name string) (string, error) {

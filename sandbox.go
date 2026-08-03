@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"path"
 	"strings"
 	"sync"
@@ -32,6 +33,9 @@ type Config struct {
 	RuntimeMode         RuntimeMode
 	CompilationCacheDir string
 	AllowNetwork        bool
+	// HTTPClient handles wasi:http outgoing requests when network access is
+	// enabled. Nil uses Go's default client and certificate verification.
+	HTTPClient *http.Client
 	// FileSystem creates the Afero mounts exposed to each sandbox. Nil uses a
 	// private in-memory COW layer backed by a temporary host directory.
 	FileSystem FileSystemFactory
@@ -167,18 +171,45 @@ func (e *Engine) NewSandbox(ctx context.Context) (*Sandbox, error) {
 	if err != nil {
 		return nil, err
 	}
+	inst, err := e.instantiateLocked(ctx, fsConfig)
+	if err != nil {
+		_ = filesystem.close()
+		return nil, err
+	}
+
+	return &Sandbox{inst: inst, fs: filesystem, config: e.config, engine: e}, nil
+}
+
+func (e *Engine) instantiateLocked(ctx context.Context, fsConfig wazy.FSConfig) (*component.Instance, error) {
 	options := component.WithWASI(component.WASIConfig{
-		FS:       fsConfig,
-		AllowTCP: e.config.AllowNetwork,
+		FS:         fsConfig,
+		AllowTCP:   e.config.AllowNetwork,
+		EnableHTTP: e.config.AllowNetwork,
+		HTTPClient: e.config.HTTPClient,
 	})
 	options = append(options, component.WithCompileCache(e.cache))
 	inst, err := component.Instantiate(ctx, e.runtime, embeddedGuest, options...)
 	if err != nil {
-		_ = filesystem.close()
 		return nil, fmt.Errorf("pycage: instantiate CPython component: %w", err)
 	}
+	return inst, nil
+}
 
-	return &Sandbox{inst: inst, fs: filesystem, config: e.config, engine: e}, nil
+func (s *Sandbox) restartLocked(ctx context.Context) error {
+	s.engine.mu.Lock()
+	defer s.engine.mu.Unlock()
+	if s.engine.closed {
+		return ErrClosed
+	}
+	if err := s.inst.Close(ctx); err != nil {
+		return fmt.Errorf("pycage: close retired component: %w", err)
+	}
+	inst, err := s.engine.instantiateLocked(ctx, s.fs.config)
+	if err != nil {
+		return err
+	}
+	s.inst = inst
+	return nil
 }
 
 // Close releases the Engine's compiled component and Wazy runtime. All
@@ -211,8 +242,21 @@ func (s *Sandbox) RunCode(ctx context.Context, code string) (Execution, error) {
 
 	callCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
+	_ = s.fs.remove("/.pycage-run-result.json")
 	values, err := s.inst.CallExport(callCtx, componentInterface, "run-code", code)
+	var payload string
+	if mirrored, readErr := s.fs.readFile("/.pycage-run-result.json"); readErr == nil {
+		payload = string(mirrored)
+		_ = s.fs.remove("/.pycage-run-result.json")
+	}
 	if err != nil {
+		if payload != "" {
+			var execution Execution
+			if decodeErr := json.Unmarshal([]byte(payload), &execution); decodeErr != nil {
+				return Execution{}, fmt.Errorf("pycage: decode mirrored guest result: %w", decodeErr)
+			}
+			return execution, nil
+		}
 		// A trap or cancellation can close an underlying core module. Retire the
 		// whole context so a caller never accidentally reuses partial state.
 		_ = s.closeLocked(context.Background())
@@ -221,9 +265,12 @@ func (s *Sandbox) RunCode(ctx context.Context, code string) (Execution, error) {
 	if len(values) != 1 {
 		return Execution{}, fmt.Errorf("pycage: guest returned %d values, want 1", len(values))
 	}
-	payload, ok := values[0].(string)
-	if !ok {
-		return Execution{}, fmt.Errorf("pycage: guest returned %T, want string", values[0])
+	if payload == "" {
+		var ok bool
+		payload, ok = values[0].(string)
+		if !ok {
+			return Execution{}, fmt.Errorf("pycage: guest returned %T, want string", values[0])
+		}
 	}
 
 	var execution Execution

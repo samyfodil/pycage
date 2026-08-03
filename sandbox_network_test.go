@@ -2,10 +2,66 @@ package pycage
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 )
+
+func TestHTTPSViaWASIHTTP(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		_, _ = response.Write([]byte("tls works"))
+	}))
+	defer server.Close()
+
+	ctx := context.Background()
+	config := DefaultConfig()
+	config.RuntimeMode = RuntimeModeInterpreter
+	config.AllowNetwork = true
+	config.HTTPClient = server.Client()
+	sandbox, err := New(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sandbox.Close(ctx) })
+
+	code := fmt.Sprintf("import pycage_http; r = pycage_http.get(%q); (r.status_code, r.text)", server.URL)
+	result, err := sandbox.RunCode(ctx, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != nil {
+		t.Fatalf("HTTPS request: %+v", result.Error)
+	}
+	if result.Text() != "(200, 'tls works')" {
+		t.Fatalf("HTTPS result = %q", result.Text())
+	}
+}
+
+func TestGuestDoesNotAdvertiseUnusableIPv6(t *testing.T) {
+	ctx := context.Background()
+	config := DefaultConfig()
+	config.RuntimeMode = RuntimeModeInterpreter
+	config.AllowNetwork = true
+	sandbox, err := New(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = sandbox.Close(ctx) })
+
+	result, err := sandbox.RunCode(ctx, "import socket; socket.has_ipv6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Error != nil {
+		t.Fatalf("import socket: %+v", result.Error)
+	}
+	if result.Text() != "False" {
+		t.Fatalf("socket.has_ipv6 = %q", result.Text())
+	}
+}
 
 func TestEmbeddedPipInstallsFromPyPI(t *testing.T) {
 	if os.Getenv("PYCAGE_NETWORK_TESTS") != "1" {

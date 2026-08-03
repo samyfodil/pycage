@@ -1,7 +1,5 @@
 .PHONY: all build bindings guest test bench clean
 
-GOCACHE := $(CURDIR)/.cache/go-build
-
 all: build
 
 .venv/bin/componentize-py:
@@ -9,9 +7,11 @@ all: build
 	.venv/bin/pip install componentize-py==0.19.1
 
 bindings: .venv/bin/componentize-py
-	rm -rf $(CURDIR)/.cache/componentize-bindings
-	.venv/bin/componentize-py -d wit -w python-sandbox bindings .cache/componentize-bindings
-	cp -R .cache/componentize-bindings/. guest/
+	set -e; \
+	bindings_dir=$$(mktemp -d /tmp/pycage-bindings.XXXXXX); \
+	trap 'rm -rf -- "$$bindings_dir"' EXIT; \
+	.venv/bin/componentize-py -d wit -w python-sandbox bindings "$$bindings_dir"; \
+	cp -R "$$bindings_dir"/. guest/
 	sed -i '$${/^$$/d;}' guest/wit_world/exports/__init__.py
 
 guest: bindings
@@ -19,13 +19,13 @@ guest: bindings
 
 build: guest
 	mkdir -p bin
-	GOCACHE=$(GOCACHE) go build -mod=vendor -o bin/pycage ./cmd/pycage
+	go build -o bin/pycage ./cmd/pycage
 
 test: guest
-	GOCACHE=$(GOCACHE) go test -mod=vendor ./...
+	go test ./...
 
 bench: guest
-	GOCACHE=$(GOCACHE) go test -mod=vendor -run '^$$' -bench . -benchtime=1x -benchmem .
+	go test -run '^$$' -bench . -benchtime=1x -benchmem .
 
 clean:
 	go clean
