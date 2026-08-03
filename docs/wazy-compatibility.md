@@ -1,8 +1,8 @@
 # Wazy compatibility notes
 
 `componentize-py 0.19.1` produces a larger and more varied component graph than
-Wazy's existing Rust fixtures. The pinned Wazy revision required four focused
-changes for the generated CPython component:
+Wazy's original Rust fixtures. The Wazy revision pinned by pycage now includes
+the required upstream support:
 
 1. Resolve each core instantiation's `with` arguments locally. Consumer module
    names may collide when one provider is regrouped more than once.
@@ -12,17 +12,18 @@ changes for the generated CPython component:
 4. Account for instance exports that append aliases to the component instance
    index space.
 
-The CPython and pip file paths also reach
-`wasi:filesystem/types.descriptor.get-flags` and `descriptor.sync`, so the
-vendored WASI filesystem implements both for its in-memory descriptors. Its
-`rename-at` implementation also follows POSIX file replacement semantics,
-which pip uses when atomically updating wheel metadata.
+It also includes real `FSConfig` mounts for Component Model WASI 0.2 plus the
+`descriptor.get-flags`, `descriptor.sync`, and `descriptor.sync-data` methods
+CPython reaches. The vendored source is an unmodified copy of that upstream
+module revision.
 
-The changes are contained in:
+One upstream gap remains:
 
-- `vendor/github.com/samyfodil/wazy/internal/component/instance/graph.go`
-- `vendor/github.com/samyfodil/wazy/internal/component/instance/shim.go`
-- `vendor/github.com/samyfodil/wazy/internal/component/instance/wasi_fs.go`
+- `wasi:filesystem/types@0.2.0#[method]descriptor.set-times-at` is not
+  implemented. CPython's `os.utime` therefore traps. Pip can reach it when a
+  cross-mount rename falls back to a metadata-preserving copy.
 
-They should become upstream Wazy tests and patches. Do not regenerate `vendor/`
-without preserving these changes until the pinned Wazy version includes them.
+Pycage avoids that pip path by installing into `/pycage-install` on the root
+mount and finalizing validated package files into `/site-packages` through the
+host-side Afero mounts. General guest `os.utime` remains unsupported until Wazy
+implements `set-times-at`.

@@ -42,8 +42,8 @@ func newPyPIDownloader() *pypiDownloader {
 	}}
 }
 
-func (d *pypiDownloader) Prefetch(ctx context.Context, requirements []string, fs map[string][]byte) error {
-	state := &pypiDownloadState{downloader: d, fs: fs, seen: map[string]bool{}}
+func (d *pypiDownloader) Prefetch(ctx context.Context, requirements []string, writeFile func(string, []byte) error) error {
+	state := &pypiDownloadState{downloader: d, writeFile: writeFile, seen: map[string]bool{}}
 	for _, requirement := range requirements {
 		if strings.HasPrefix(requirement, "-") || strings.HasPrefix(requirement, "/") {
 			continue
@@ -57,7 +57,7 @@ func (d *pypiDownloader) Prefetch(ctx context.Context, requirements []string, fs
 
 type pypiDownloadState struct {
 	downloader *pypiDownloader
-	fs         map[string][]byte
+	writeFile  func(string, []byte) error
 	seen       map[string]bool
 	total      int64
 }
@@ -149,7 +149,9 @@ func (s *pypiDownloadState) fetchRequirement(ctx context.Context, requirement st
 	if s.total > maxPackageDownloadTotal {
 		return fmt.Errorf("pycage: package downloads exceed %d bytes", maxPackageDownloadTotal)
 	}
-	s.fs["/pycage-wheels/"+filepath.Base(wheel.Filename)] = contents
+	if err := s.writeFile("/pycage-wheels/"+filepath.Base(wheel.Filename), contents); err != nil {
+		return fmt.Errorf("pycage: write wheelhouse: %w", err)
+	}
 
 	for _, dependency := range project.Info.RequiresDist {
 		if marker := strings.SplitN(dependency, ";", 2); len(marker) == 2 && strings.Contains(strings.ToLower(marker[1]), "extra") {

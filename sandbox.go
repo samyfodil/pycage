@@ -32,6 +32,9 @@ type Config struct {
 	RuntimeMode         RuntimeMode
 	CompilationCacheDir string
 	AllowNetwork        bool
+	// FileSystem creates the Afero mounts exposed to each sandbox. Nil uses a
+	// private in-memory COW layer backed by a temporary host directory.
+	FileSystem FileSystemFactory
 }
 
 // RuntimeMode selects Wazy's execution backend. The zero value uses the native
@@ -69,7 +72,7 @@ func DefaultConfig() Config {
 type Sandbox struct {
 	mu     sync.Mutex
 	inst   *component.Instance
-	fs     map[string][]byte
+	fs     *sandboxFilesystem
 	config Config
 	engine *Engine
 	owned  bool
@@ -160,18 +163,22 @@ func (e *Engine) NewSandbox(ctx context.Context) (*Sandbox, error) {
 		return nil, ErrClosed
 	}
 
-	fs := map[string][]byte{}
+	filesystem, fsConfig, err := newSandboxFilesystem(e.config.FileSystem)
+	if err != nil {
+		return nil, err
+	}
 	options := component.WithWASI(component.WASIConfig{
-		FS:       fs,
+		FS:       fsConfig,
 		AllowTCP: e.config.AllowNetwork,
 	})
 	options = append(options, component.WithCompileCache(e.cache))
 	inst, err := component.Instantiate(ctx, e.runtime, embeddedGuest, options...)
 	if err != nil {
+		_ = filesystem.close()
 		return nil, fmt.Errorf("pycage: instantiate CPython component: %w", err)
 	}
 
-	return &Sandbox{inst: inst, fs: fs, config: e.config, engine: e}, nil
+	return &Sandbox{inst: inst, fs: filesystem, config: e.config, engine: e}, nil
 }
 
 // Close releases the Engine's compiled component and Wazy runtime. All
@@ -252,7 +259,9 @@ func (s *Sandbox) WriteFile(name string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	s.fs[name] = append([]byte(nil), data...)
+	if err := s.fs.writeFile(name, data); err != nil {
+		return fmt.Errorf("pycage: write file %q: %w", name, err)
+	}
 	return nil
 }
 
@@ -267,11 +276,11 @@ func (s *Sandbox) ReadFile(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, ok := s.fs[name]
-	if !ok {
-		return nil, fmt.Errorf("pycage: file %q does not exist", name)
+	data, err := s.fs.readFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("pycage: read file %q: %w", name, err)
 	}
-	return append([]byte(nil), data...), nil
+	return data, nil
 }
 
 // Close releases the component. A sandbox made with New also releases its
@@ -288,10 +297,11 @@ func (s *Sandbox) closeLocked(ctx context.Context) error {
 	}
 	s.closed = true
 	instanceErr := s.inst.Close(ctx)
+	filesystemErr := s.fs.close()
 	if s.owned {
-		return errors.Join(instanceErr, s.engine.Close(ctx))
+		return errors.Join(instanceErr, filesystemErr, s.engine.Close(ctx))
 	}
-	return instanceErr
+	return errors.Join(instanceErr, filesystemErr)
 }
 
 func cleanGuestPath(name string) (string, error) {

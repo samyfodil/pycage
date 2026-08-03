@@ -102,7 +102,9 @@ func (s *Sandbox) InstallWheel(wheel []byte) (WheelInfo, error) {
 		if err != nil {
 			return WheelInfo{}, fmt.Errorf("pycage: read wheel file %q: %w", name, err)
 		}
-		s.fs["/site-packages/"+name] = contents
+		if err := s.fs.writeFile("/site-packages/"+name, contents); err != nil {
+			return WheelInfo{}, fmt.Errorf("pycage: write wheel file %q: %w", name, err)
+		}
 		if moduleName, isPackage, ok := wheelModuleName(name); ok {
 			if !utf8.Valid(contents) {
 				return WheelInfo{}, fmt.Errorf("pycage: Python source %q is not UTF-8", name)

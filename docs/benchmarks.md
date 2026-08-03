@@ -38,6 +38,12 @@ With the persistent native cache enabled, an empty-cache compiler run took
 
 These numbers are a diagnostic baseline, not portable performance claims.
 
+After the 2026-08-03 Wazy `FSConfig`/Afero migration, a 10-iteration check on
+the same machine measured 19.4 ms and 5.13 MB for a cached sandbox, 0.170 ms
+and 17.6 KB for a warm compiler cell, and 2.05 ms and 11.3 KB for a warm
+interpreter cell. Filesystem flexibility did not materially change latency;
+the warm-call allocation count increased from the original baseline.
+
 ## Bottleneck
 
 A CPU profile of one cold compiler iteration attributes:

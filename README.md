@@ -19,7 +19,7 @@ pycage: execute: ... context deadline exceeded
 - Stateful cells: variables and imports survive between `RunCode` calls.
 - Captured stdout, stderr, rich text/HTML/SVG/JSON results, and tracebacks.
 - Host-enforced execution deadlines and WebAssembly memory limits.
-- An isolated in-memory filesystem with no host paths exposed.
+- An isolated Afero COW filesystem with no host paths exposed by default.
 - Pure-Python wheel installation with native files, path traversal, oversized
   archives, and non-`none-any` wheels rejected.
 - Embedded pip 25.1.1 with runtime PyPI downloads, dependency prefetching, and
@@ -100,6 +100,48 @@ Files are isolated from the host:
 sandbox.WriteFile("input.txt", []byte("hello"))
 result, _ := sandbox.RunCode(ctx, `open("/input.txt").read()`)
 ```
+
+The default filesystem is a fresh `afero.MemMapFs` writable layer over a
+private temporary-directory base. Guest writes, including pip's
+`/site-packages`, remain in memory and disappear when the sandbox closes; the
+temporary base is also removed. Wazy receives these files through its normal
+`FSConfig` mount API.
+
+Filesystem access is an explicit capability. Mount any Afero filesystem,
+bind a host directory read-write, or compose Afero's copy-on-write filesystem:
+
+```go
+config := pycage.DefaultConfig()
+config.FileSystem = pycage.StaticFileSystem(
+    pycage.Mount("/", afero.NewMemMapFs()),
+    pycage.Bind("/workspace", "/srv/agent-workspace"),
+    pycage.CopyOnWrite(
+        "/packages",
+        afero.NewBasePathFs(afero.NewOsFs(), "/srv/package-base"),
+        afero.NewMemMapFs(),
+    ),
+)
+```
+
+`StaticFileSystem` deliberately shares the supplied Afero instances between
+Engine-created sandboxes. For isolated custom layers, assign a
+`FileSystemFactory` that constructs new mounts on every call. Use
+`ReadOnlyMount` when the guest must not mutate a mount.
+
+The CLI exposes host-directory binds as repeatable capabilities:
+
+```console
+# Write-through: guest changes appear in the host directory.
+./bin/pycage run -bind '/srv/work=/workspace' \
+  'open("/workspace/result.txt", "w").write("done")'
+
+# COW: host files are readable, but guest changes stay in memory.
+./bin/pycage run -bind-cow '/srv/packages=/packages' \
+  'open("/packages/config.json").read()'
+```
+
+Afero COW copies file writes and metadata changes into the layer; its upstream
+semantics reject rename or removal of entries that exist only in the base.
 
 Install a downloaded, pinned wheel after verifying its hash in your
 application:

@@ -31,12 +31,10 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 		return PipResult{}, fmt.Errorf("pycage: pip install requires at least one requirement")
 	}
 	if s.engine.pypi != nil {
-		for name := range s.fs {
-			if strings.HasPrefix(name, "/pycage-wheels/") {
-				delete(s.fs, name)
-			}
+		if err := s.fs.removeAll("/pycage-wheels"); err != nil {
+			return PipResult{}, fmt.Errorf("pycage: clear wheelhouse: %w", err)
 		}
-		if err := s.engine.pypi.Prefetch(ctx, requirements, s.fs); err != nil {
+		if err := s.engine.pypi.Prefetch(ctx, requirements, s.fs.writeFile); err != nil {
 			return PipResult{}, err
 		}
 	}
@@ -50,19 +48,21 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 		"--no-warn-conflicts",
 		"--root-user-action", "ignore",
 		"--only-binary", ":all:",
+		"--prefix", "/pycage-install",
 	}
 	if s.engine.pypi != nil {
-		arguments = append(arguments, "--prefix", "/pycage-install", "--no-index", "--no-deps")
+		arguments = append(arguments, "--no-index", "--no-deps")
+		wheelFiles, err := s.fs.listFiles("/pycage-wheels")
+		if err != nil {
+			return PipResult{}, fmt.Errorf("pycage: list wheelhouse: %w", err)
+		}
 		var wheelPaths []string
-		for name := range s.fs {
-			if strings.HasPrefix(name, "/pycage-wheels/") {
-				wheelPaths = append(wheelPaths, name)
-			}
+		for name := range wheelFiles {
+			wheelPaths = append(wheelPaths, name)
 		}
 		sort.Strings(wheelPaths)
 		arguments = append(arguments, wheelPaths...)
 	} else {
-		arguments = append(arguments, "--target", "/site-packages")
 		arguments = append(arguments, requirements...)
 	}
 	payload, err := json.Marshal(map[string]any{"pycage_pip_arguments": arguments})
@@ -72,7 +72,7 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 
 	callCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
-	delete(s.fs, "/.pycage-pip-result.json")
+	_ = s.fs.remove("/.pycage-pip-result.json")
 	values, err := s.inst.CallExport(callCtx, componentInterface, "install-modules", string(payload))
 	if err != nil {
 		_ = s.closeLocked(context.Background())
@@ -85,9 +85,9 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 	if !ok {
 		return PipResult{}, fmt.Errorf("pycage: pip install returned %T, want string", values[0])
 	}
-	if mirrored, exists := s.fs["/.pycage-pip-result.json"]; exists {
+	if mirrored, readErr := s.fs.readFile("/.pycage-pip-result.json"); readErr == nil {
 		response = string(mirrored)
-		delete(s.fs, "/.pycage-pip-result.json")
+		_ = s.fs.remove("/.pycage-pip-result.json")
 	}
 	var result PipResult
 	if err := json.Unmarshal([]byte(response), &result); err != nil {
@@ -102,8 +102,22 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 }
 
 func (s *Sandbox) finalizePipTargetLocked(ctx context.Context) error {
-	moved := false
-	for name, contents := range s.fs {
+	installed, err := s.fs.listFiles("/site-packages")
+	if err != nil {
+		return fmt.Errorf("pycage: inspect installed packages: %w", err)
+	}
+	staged := make(map[string][]byte)
+	for _, root := range []string{"/pycage-install", "/tmp"} {
+		files, err := s.fs.listFiles(root)
+		if err != nil {
+			return fmt.Errorf("pycage: inspect pip target: %w", err)
+		}
+		for name, contents := range files {
+			staged[name] = contents
+		}
+	}
+	moved := len(installed) > 0
+	for name, contents := range staged {
 		var relative string
 		if strings.HasPrefix(name, "/pycage-install/") {
 			const marker = "/site-packages/"
@@ -130,8 +144,13 @@ func (s *Sandbox) finalizePipTargetLocked(ctx context.Context) error {
 			strings.HasSuffix(lower, ".dylib") || strings.HasSuffix(lower, ".wasm") {
 			return fmt.Errorf("pycage: pip package contains native file %q", relative)
 		}
-		s.fs["/site-packages/"+relative] = append([]byte(nil), contents...)
-		delete(s.fs, name)
+		destination := "/site-packages/" + relative
+		if err := s.fs.writeFile(destination, contents); err != nil {
+			return fmt.Errorf("pycage: finalize package file %q: %w", destination, err)
+		}
+		if err := s.fs.remove(name); err != nil {
+			return fmt.Errorf("pycage: remove staged package file %q: %w", name, err)
+		}
 		moved = true
 	}
 	if !moved {
@@ -139,10 +158,11 @@ func (s *Sandbox) finalizePipTargetLocked(ctx context.Context) error {
 	}
 
 	modules := map[string]wheelModule{}
-	for name, contents := range s.fs {
-		if !strings.HasPrefix(name, "/site-packages/") {
-			continue
-		}
+	installed, err = s.fs.listFiles("/site-packages")
+	if err != nil {
+		return fmt.Errorf("pycage: inspect installed packages: %w", err)
+	}
+	for name, contents := range installed {
 		relative := strings.TrimPrefix(name, "/site-packages/")
 		moduleName, isPackage, ok := wheelModuleName(relative)
 		if !ok {

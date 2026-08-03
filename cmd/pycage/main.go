@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/samyfodil/pycage"
+	"github.com/spf13/afero"
 )
 
 func main() {
@@ -29,8 +30,12 @@ func main() {
 	showTiming := flags.Bool("timing", false, "print sandbox setup and execution timings")
 	var wheels stringList
 	var requirements stringList
+	var binds stringList
+	var cowBinds stringList
 	flags.Var(&wheels, "wheel", "pure-Python wheel to install (repeatable)")
 	flags.Var(&requirements, "pip", "requirement to install with embedded pip (repeatable)")
+	flags.Var(&binds, "bind", "bind host directory read-write as host[=guest] (repeatable)")
+	flags.Var(&cowBinds, "bind-cow", "bind host directory with an in-memory COW layer as host[=guest] (repeatable)")
 	_ = flags.Parse(os.Args[2:])
 	if flags.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "pycage: missing Python code")
@@ -39,12 +44,17 @@ func main() {
 
 	ctx := context.Background()
 	setupStarted := time.Now()
+	filesystem, err := bindingFileSystem(binds, cowBinds)
+	if err != nil {
+		fatal(err)
+	}
 	sandbox, err := pycage.New(ctx, pycage.Config{
 		Timeout:             *timeout,
 		MemoryLimitBytes:    *memory,
 		RuntimeMode:         pycage.RuntimeMode(*runtimeMode),
 		CompilationCacheDir: *cacheDir,
 		AllowNetwork:        *allowNetwork,
+		FileSystem:          filesystem,
 	})
 	if err != nil {
 		fatal(err)
@@ -113,6 +123,9 @@ Options:
   -timing             print setup and execution timings
   -wheel path       install a pure-Python wheel (repeatable)
   -pip requirement  install with embedded pip (repeatable)
+  -bind host[=guest] bind a host directory read-write (repeatable)
+  -bind-cow host[=guest]
+                     bind a host directory with memory-only writes (repeatable)
   -json             print structured execution JSON`)
 }
 
@@ -127,6 +140,78 @@ func (values *stringList) String() string { return strings.Join(*values, ",") }
 func (values *stringList) Set(value string) error {
 	*values = append(*values, value)
 	return nil
+}
+
+type binding struct {
+	host  string
+	guest string
+	cow   bool
+}
+
+func bindingFileSystem(direct, copyOnWrite []string) (pycage.FileSystemFactory, error) {
+	if len(direct) == 0 && len(copyOnWrite) == 0 {
+		return nil, nil
+	}
+	bindings := make([]binding, 0, len(direct)+len(copyOnWrite))
+	seen := make(map[string]bool, cap(bindings))
+	for _, group := range []struct {
+		values []string
+		cow    bool
+	}{{direct, false}, {copyOnWrite, true}} {
+		for _, value := range group.values {
+			host, guest := value, "/"
+			if separator := strings.LastIndexByte(value, '='); separator >= 0 {
+				host, guest = value[:separator], value[separator+1:]
+			}
+			if host == "" || guest == "" {
+				return nil, fmt.Errorf("invalid filesystem binding %q", value)
+			}
+			absolute, err := filepath.Abs(host)
+			if err != nil {
+				return nil, fmt.Errorf("resolve bind path %q: %w", host, err)
+			}
+			info, err := os.Stat(absolute)
+			if err != nil {
+				return nil, fmt.Errorf("bind %q: %w", absolute, err)
+			}
+			if !info.IsDir() {
+				return nil, fmt.Errorf("bind %q: not a directory", absolute)
+			}
+			guest = "/" + strings.Trim(strings.ReplaceAll(guest, "\\", "/"), "/")
+			if guest == "" {
+				guest = "/"
+			}
+			if seen[guest] {
+				return nil, fmt.Errorf("duplicate guest filesystem binding %q", guest)
+			}
+			seen[guest] = true
+			bindings = append(bindings, binding{host: absolute, guest: guest, cow: group.cow})
+		}
+	}
+	return func() (pycage.FileSystem, error) {
+		filesystem, err := pycage.DefaultFileSystem()
+		if err != nil {
+			return pycage.FileSystem{}, err
+		}
+		for _, binding := range bindings {
+			mount := pycage.Bind(binding.guest, binding.host)
+			if binding.cow {
+				mount = pycage.CopyOnWrite(binding.guest, mount.FS, afero.NewMemMapFs())
+			}
+			replaced := false
+			for index := range filesystem.Mounts {
+				if filesystem.Mounts[index].GuestPath == binding.guest {
+					filesystem.Mounts[index] = mount
+					replaced = true
+					break
+				}
+			}
+			if !replaced {
+				filesystem.Mounts = append(filesystem.Mounts, mount)
+			}
+		}
+		return filesystem, nil
+	}, nil
 }
 
 func fatal(err error) {
