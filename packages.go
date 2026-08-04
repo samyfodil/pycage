@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"path"
@@ -22,11 +21,6 @@ type WheelInfo struct {
 	Name    string
 	Version string
 	Files   int
-}
-
-type wheelModule struct {
-	Source  string `json:"source"`
-	Package bool   `json:"package"`
 }
 
 // InstallWheel validates and extracts a pure-Python wheel into the sandbox's
@@ -57,6 +51,9 @@ func (s *Sandbox) InstallWheel(wheel []byte) (WheelInfo, error) {
 		if name == "" {
 			continue
 		}
+		// archive/zip fails a read as soon as it yields more than the entry's
+		// declared size, so summing the declared sizes bounds what the write
+		// loop below can expand into the sandbox filesystem.
 		total += file.UncompressedSize64
 		if total > maxWheelBytes {
 			return WheelInfo{}, fmt.Errorf("pycage: expanded wheel exceeds %d bytes", maxWheelBytes)
@@ -92,7 +89,7 @@ func (s *Sandbox) InstallWheel(wheel []byte) (WheelInfo, error) {
 		Name:    metadataValue(packageMetadata, "Name"),
 		Version: metadataValue(packageMetadata, "Version"),
 	}
-	modules := map[string]wheelModule{}
+	importable := 0
 	for _, file := range reader.File {
 		name, err := cleanWheelPath(file.Name)
 		if err != nil || name == "" {
@@ -105,50 +102,38 @@ func (s *Sandbox) InstallWheel(wheel []byte) (WheelInfo, error) {
 		if err := s.fs.writeFile("/site-packages/"+name, contents); err != nil {
 			return WheelInfo{}, fmt.Errorf("pycage: write wheel file %q: %w", name, err)
 		}
-		if moduleName, isPackage, ok := wheelModuleName(name); ok {
+		if _, _, ok := wheelModuleName(name); ok {
 			if !utf8.Valid(contents) {
 				return WheelInfo{}, fmt.Errorf("pycage: Python source %q is not UTF-8", name)
 			}
-			modules[moduleName] = wheelModule{Source: string(contents), Package: isPackage}
+			importable++
 		}
 		info.Files++
 	}
-	if len(modules) == 0 {
+	if importable == 0 {
 		return WheelInfo{}, fmt.Errorf("pycage: wheel contains no importable Python modules")
-	}
-	payload, err := json.Marshal(modules)
-	if err != nil {
-		return WheelInfo{}, fmt.Errorf("pycage: encode wheel modules: %w", err)
 	}
 	callCtx, cancel := context.WithTimeout(context.Background(), s.config.Timeout)
 	defer cancel()
-	if err := s.installModulesLocked(callCtx, payload); err != nil {
+	if err := s.refreshGuestImportsLocked(callCtx); err != nil {
 		return WheelInfo{}, err
 	}
 	return info, nil
 }
 
-func (s *Sandbox) installModulesLocked(ctx context.Context, payload []byte) error {
-	values, err := s.inst.CallExport(ctx, componentInterface, "install-modules", string(payload))
+// refreshGuestImportsLocked makes files already written to /site-packages
+// importable in the running instance. The guest keeps /site-packages on
+// sys.path, so only CPython's directory cache needs clearing. Shipping every
+// module's source through the component-model string parameter instead made the
+// payload grow with the whole install set, and lowering it failed outright past
+// a couple of megabytes.
+func (s *Sandbox) refreshGuestImportsLocked(ctx context.Context) error {
+	_, err := s.inst.CallExport(ctx, componentInterface, "run-code",
+		"import importlib\nimportlib.invalidate_caches()")
+	s.fs.remove("/.pycage-run-result.json")
 	if err != nil {
-		_ = s.closeLocked(context.Background())
-		return fmt.Errorf("pycage: install wheel modules: %w", err)
-	}
-	if len(values) != 1 {
-		return fmt.Errorf("pycage: install wheel modules returned %d values, want 1", len(values))
-	}
-	response, ok := values[0].(string)
-	if !ok {
-		return fmt.Errorf("pycage: install wheel modules returned %T, want string", values[0])
-	}
-	var status struct {
-		Error string `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(response), &status); err != nil {
-		return fmt.Errorf("pycage: decode module installation result: %w", err)
-	}
-	if status.Error != "" {
-		return fmt.Errorf("pycage: guest rejected modules: %s", status.Error)
+		s.closeLocked(context.Background())
+		return fmt.Errorf("pycage: refresh guest imports: %w", err)
 	}
 	return nil
 }

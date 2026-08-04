@@ -72,12 +72,12 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 
 	callCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
-	_ = s.fs.remove("/.pycage-pip-result.json")
+	s.fs.remove("/.pycage-pip-result.json")
 	values, err := s.inst.CallExport(callCtx, componentInterface, "install-modules", string(payload))
 	var response string
 	if mirrored, readErr := s.fs.readFile("/.pycage-pip-result.json"); readErr == nil {
 		response = string(mirrored)
-		_ = s.fs.remove("/.pycage-pip-result.json")
+		s.fs.remove("/.pycage-pip-result.json")
 	}
 	if err != nil {
 		if response != "" {
@@ -95,7 +95,7 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 			}
 			return result, nil
 		}
-		_ = s.closeLocked(context.Background())
+		s.closeLocked(context.Background())
 		return PipResult{}, fmt.Errorf("pycage: pip install: %w", err)
 	}
 	if len(values) != 1 {
@@ -114,6 +114,9 @@ func (s *Sandbox) PipInstall(ctx context.Context, requirements ...string) (PipRe
 	}
 	if result.ExitCode == 0 && result.Error == "" {
 		if err := s.finalizePipTargetLocked(callCtx); err != nil {
+			return result, err
+		}
+		if err := s.restartLocked(callCtx); err != nil {
 			return result, err
 		}
 	}
@@ -176,37 +179,25 @@ func (s *Sandbox) finalizePipTargetLocked(ctx context.Context) error {
 		return fmt.Errorf("pycage: pip succeeded but produced no installable files")
 	}
 
-	modules := map[string]wheelModule{}
 	installed, err = s.fs.listFiles("/site-packages")
 	if err != nil {
 		return fmt.Errorf("pycage: inspect installed packages: %w", err)
 	}
+	importable := 0
 	for name, contents := range installed {
 		relative := strings.TrimPrefix(name, "/site-packages/")
-		moduleName, isPackage, ok := wheelModuleName(relative)
-		if !ok {
+		if _, _, ok := wheelModuleName(relative); !ok {
 			continue
 		}
 		if !utf8.Valid(contents) {
 			return fmt.Errorf("pycage: installed Python source %q is not UTF-8", relative)
 		}
-		modules[moduleName] = wheelModule{Source: string(contents), Package: isPackage}
+		importable++
 	}
-	for moduleName := range modules {
-		parts := strings.Split(moduleName, ".")
-		for index := 1; index < len(parts); index++ {
-			parent := strings.Join(parts[:index], ".")
-			if _, exists := modules[parent]; !exists {
-				modules[parent] = wheelModule{Source: "", Package: true}
-			}
-		}
-	}
-	if len(modules) == 0 {
+	if importable == 0 {
 		return fmt.Errorf("pycage: pip installed no importable Python modules")
 	}
-	payload, err := json.Marshal(modules)
-	if err != nil {
-		return fmt.Errorf("pycage: encode pip-installed modules: %w", err)
-	}
-	return s.installModulesLocked(ctx, payload)
+	// Nothing is sent to the guest here. Callers restart the instance, and the
+	// fresh CPython picks these files up from /site-packages via sys.path.
+	return nil
 }
