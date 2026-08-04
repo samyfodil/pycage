@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo-mark.png" alt="" width="220">
+  <img src="docs/logo-mark.png" alt="pycage" width="220">
 </p>
 
 <h1 align="center">pycage</h1>
@@ -16,15 +16,19 @@
 </p>
 
 ```console
-$ ./bin/pycage run 'print("hello from CPython"); sum(i * i for i in range(10))'
+$ pycage run 'print("hello from CPython"); sum(i * i for i in range(10))'
 hello from CPython
 285
 ```
 
-Pycage embeds CPython as a [WebAssembly component](https://component-model.bytecodealliance.org/)
-and runs it in-process on [Wazy](https://github.com/samyfodil/wazy), a pure-Go
-Wasm runtime. It is a Go library first and a CLI second, built for agents and
-products that need to execute code they did not write.
+Pycage runs CPython 3.14 in your own process on
+[Wazy](https://github.com/samyfodil/wazy) — a pure-Go WebAssembly runtime with a
+native amd64/arm64 compiler, WASI Preview 2, and full Component Model support.
+Wazy is what makes any of this possible: no cgo, no container runtime, no host
+Python, one static binary that cross-compiles everywhere Go does.
+
+Pycage is the policy layer on top — capabilities, limits, filesystems, packages —
+and a Go library first, a CLI second.
 
 ## Why not a container?
 
@@ -59,6 +63,34 @@ auditable surface, but it is a different bet, not a free one. Pycage has not
 been independently audited. Wall-clock and memory are capped; CPU is not
 accounted for. For actively hostile code, keep OS-level limits underneath.
 
+## A free, self-hosted alternative to E2B
+
+pycage does the same job as a hosted code-execution sandbox — run an agent's
+Python somewhere it cannot hurt you — with no account, no bill, and no
+infrastructure to operate. It is Apache-2.0, it is one Go binary, and the sandbox
+runs inside your own process. `pycage serve` speaks E2B's own SDK protocol, so
+pointing an existing integration at it is a URL change.
+
+| | isolation | self-host | needs | license |
+| --- | --- | --- | --- | --- |
+| **pycage** | Wasm, in-process | yes | nothing | Apache-2.0 |
+| [E2B](https://github.com/e2b-dev/E2B) | Firecracker microVM | yes | Terraform + AWS or GCP | Apache-2.0 |
+| [Modal](https://modal.com) sandboxes | managed, hosted | no | a Modal account | proprietary |
+| [Judge0](https://github.com/judge0/judge0) | container | yes | Docker | GPL-3.0 |
+| [Piston](https://github.com/engineer-man/piston) | container | yes | Docker | MIT |
+| [Pyodide](https://pyodide.org) | Wasm, in-process | yes | a JS engine | MPL-2.0 |
+
+E2B is open source too, but its self-hosting guide deploys through Terraform to
+AWS or GCP and lists Azure and plain Linux machines as unsupported. That is the
+practical difference: self-hosting E2B means standing up cloud infrastructure,
+self-hosting pycage means `go get`.
+
+The honest trade is scope. E2B hands you a Linux VM — a shell, a package manager,
+native extensions, GPUs. pycage hands you CPython and pure-Python packages, and
+nothing else exists inside the guest. If you need `apt install` or PyTorch, take
+the VM. If you need to run a model's Python in milliseconds without operating a
+cluster, that is this.
+
 ## What you get
 
 - Real CPython packaged as a WebAssembly component with `componentize-py`.
@@ -86,7 +118,7 @@ pycage run '6 * 7'
 
 To rebuild the guest component yourself you additionally need Python 3.10+ and
 GNU Make. `make build` creates `.venv`, installs the pinned `componentize-py`,
-regenerates `guest/app.wasm`, and compresses it to the `guest/app.wasm.gz` that
+regenerates `guest/python.wasm`, and compresses it to the `guest/python.wasm.gz` that
 is embedded in the binary.
 
 ## Packages and HTTPS
@@ -95,7 +127,7 @@ Runtime package installation accepts pure `*-none-any.whl` packages. Network
 access is opt-in:
 
 ```console
-./bin/pycage run \
+pycage run \
   -timeout 60s \
   -network \
   -pip 'requests==2.32.4' \
@@ -121,7 +153,7 @@ layer over a temporary backing directory. No host path is visible by default.
 Bind a directory with write-through behavior:
 
 ```console
-./bin/pycage run \
+pycage run \
   -bind '/srv/agent-workspace=/workspace' \
   'open("/workspace/result.txt", "w").write("done")'
 ```
@@ -129,7 +161,7 @@ Bind a directory with write-through behavior:
 Expose host files with memory-only copy-on-write changes:
 
 ```console
-./bin/pycage run \
+pycage run \
   -bind-cow '/srv/package-base=/packages' \
   'open("/packages/config.json").read()'
 ```
@@ -139,7 +171,7 @@ Installed packages can persist across processes by binding a host directory to
 
 ```console
 mkdir -p site-packages
-./bin/pycage run \
+pycage run \
   -network \
   -bind './site-packages=/site-packages' \
   -pip 'six==1.17.0' \
@@ -301,7 +333,7 @@ Compiler mode is the default. Native compiled modules are cached beneath
 Interpreter mode is opt-in for disposable cold starts:
 
 ```console
-./bin/pycage run -runtime interpreter -timing '6 * 7'
+pycage run -runtime interpreter -timing '6 * 7'
 ```
 
 See [docs/benchmarks.md](docs/benchmarks.md) for measured startup and warm-call
@@ -351,7 +383,7 @@ make test
 make bench
 ```
 
-Generated artifacts (`.venv`, `guest/app.wasm`, and `bin/`) are ignored. See
+Generated artifacts (`.venv`, `guest/python.wasm`, and `bin/`) are ignored. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
 [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
