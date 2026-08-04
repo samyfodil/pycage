@@ -121,10 +121,13 @@ go install github.com/samyfodil/pycage/cmd/pycage@latest
 pycage run '6 * 7'
 ```
 
-To rebuild the guest component yourself you additionally need Python 3.10+ and
-GNU Make. `make build` creates `.venv`, installs the pinned `componentize-py`,
-regenerates `guest/python.wasm`, and compresses it to the `guest/python.wasm.gz` that
-is embedded in the binary.
+To rebuild the guest component yourself you additionally need **Python 3.13** and
+GNU Make. `make build` creates `.venv`, installs the pinned `componentize-py` and
+`pip`, regenerates `guest/python.wasm`, and compresses it to the
+`guest/python.wasm.gz` that is embedded in the binary. The Python version is not
+incidental: componentize-py resolves the guest's imports against the host
+interpreter, and 3.12 selects a `pkg_resources` that wants
+`importlib.resources._adapters`, which the guest's CPython 3.14 no longer ships.
 
 ## Packages and HTTPS
 
@@ -375,7 +378,9 @@ costs.
   headers, proxies, custom client certificates, or `verify=False`.
 - Explicit IPv6 socket bind remains disabled pending the componentized CPython
   socket-adapter fix.
-- General guest `os.utime` awaits Wazy's WASI `descriptor.set-times-at`.
+- `os.utime()` — setting a file's timestamps — takes the sandbox down rather
+  than raising. CPython lowers it to the WASI call `descriptor.set-times-at`,
+  which Wazy does not implement yet, so the guest hits a trap stub.
 - A cold native compile is expensive; reuse `Engine` or the disk cache.
 
 Implementation details and exact upstream gaps are tracked in

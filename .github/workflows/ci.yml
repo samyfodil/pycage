@@ -66,7 +66,10 @@ jobs:
           cache: true
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # componentize-py resolves the guest's pip imports against the host
+          # interpreter, and 3.12 picks a pkg_resources variant that wants
+          # importlib.resources._adapters -- gone from the guest's CPython 3.14.
+          python-version: "3.13"
       # Regenerates guest/python.wasm from guest/*.py with componentize-py and
       # runs the suite against it, so a change to the guest cannot land while
       # only the committed artifact still works.

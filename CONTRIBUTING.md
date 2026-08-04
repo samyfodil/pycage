@@ -4,7 +4,8 @@ Thanks for helping improve pycage.
 
 ## Development setup
 
-Install Go 1.26+, Python 3.10+, and GNU Make, then run:
+Install Go 1.26+, Python 3.13 (see the note in the README: the guest build is
+version-sensitive), and GNU Make, then run:
 
 ```console
 make test
