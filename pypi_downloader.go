@@ -260,8 +260,14 @@ func parsePyPIRequirement(requirement string) (name, version string, ok bool) {
 		return name, "", true
 	}
 	version = strings.TrimSpace(strings.TrimPrefix(rest, "=="))
-	if version == "" || strings.ContainsAny(version, "*, ") {
+	if version == "" || strings.ContainsAny(version, ", ") {
 		return "", "", false
+	}
+	if strings.Contains(version, "*") {
+		// "==1.*" pins a series, not a release. Treat it like any other range
+		// and take the latest; rejecting it outright blocks common dependency
+		// metadata such as httpx's "httpcore==1.*".
+		return name, "", true
 	}
 	return name, version, true
 }

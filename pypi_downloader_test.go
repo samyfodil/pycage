@@ -17,8 +17,10 @@ func TestParsePyPIRequirement(t *testing.T) {
 		{"six==1.17.0", "six", "1.17.0", true},
 		{"requests[security]>=2; python_version >= '3.10'", "requests", "", true},
 		{"urllib3<3,>=2", "urllib3", "", true},
+		{"httpcore==1.*", "httpcore", "", true},
 		{"/packages/local.whl", "", "", false},
 		{"bad name", "", "", false},
+		{"six==1.17.0,<2", "", "", false},
 	}
 	for _, test := range tests {
 		name, version, ok := parsePyPIRequirement(test.input)
