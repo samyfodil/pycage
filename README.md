@@ -21,14 +21,18 @@ hello from CPython
 285
 ```
 
-Pycage runs CPython 3.14 in your own process on
-[Wazy](https://github.com/samyfodil/wazy) — a pure-Go WebAssembly runtime with a
-native amd64/arm64 compiler, WASI Preview 2, and full Component Model support.
-Wazy is what makes any of this possible: no cgo, no container runtime, no host
-Python, one static binary that cross-compiles everywhere Go does.
+Pycage is a Python sandbox for AI-generated code: give an agent somewhere to run
+what it writes without giving it your machine. It is a free, self-hosted
+alternative to E2B and the other hosted code-execution services — no account, no
+bill, no container, no VM, nothing to operate. Real CPython 3.14, stateful cells,
+package installs, and a deny-by-default capability model, as a Go library first
+and a CLI second.
 
-Pycage is the policy layer on top — capabilities, limits, filesystems, packages —
-and a Go library first, a CLI second.
+It runs as WebAssembly, in your own process, on
+[Wazy](https://github.com/samyfodil/wazy) — a pure-Go runtime with a native
+amd64/arm64 compiler, WASI Preview 2, and full Component Model support. Wazy is
+what makes that possible: no cgo, no container runtime, no host Python, one
+static binary that cross-compiles everywhere Go does.
 
 ## Why not a container?
 
