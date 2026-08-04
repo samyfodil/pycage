@@ -200,6 +200,9 @@ if err != nil {
 defer sandbox.Close(ctx)
 ```
 
+See [examples/langchain-agent](examples/langchain-agent) for the same sandbox
+wired up as a [langchaingo](https://github.com/tmc/langchaingo) tool.
+
 Configure custom Afero mounts:
 
 ```go
@@ -219,6 +222,48 @@ config.FileSystem = pycage.StaticFileSystem(
 custom `FileSystemFactory` when every sandbox needs fresh mounts, and
 `ReadOnlyMount` for immutable capabilities.
 
+## Server mode
+
+`pycage serve` exposes an `Engine` over E2B's code-interpreter HTTP API, so
+E2B's own SDKs drive it unmodified:
+
+```console
+pycage serve                     # 127.0.0.1:49999, E2B's port
+```
+
+```python
+from e2b_code_interpreter import Sandbox
+
+sandbox = connect("http://127.0.0.1:49999")   # see examples/e2b-python
+execution = sandbox.run_code("import math; math.factorial(20)")
+print(execution.text)                          # 2432902008176640000
+```
+
+One E2B *context* is one pycage *sandbox*: independent Python globals, an
+independent filesystem, and all of them sharing the Engine's compiled component.
+Contexts are capped by `-max-contexts` and reclaimed after `-idle-timeout`, so a
+client that forgets to delete one cannot leak it.
+
+| Method | Path | |
+| --- | --- | --- |
+| `POST` | `/execute` | run a cell, stream NDJSON frames |
+| `POST` | `/contexts` | create a context |
+| `GET` | `/contexts` | list contexts |
+| `DELETE` | `/contexts/{id}` | destroy a context |
+| `GET` | `/health` | liveness, never requires a token |
+
+pycage implements E2B's data plane, not its control plane: there is no cloud API
+to allocate machines, so `Sandbox.create()` has nothing to call. Point the SDK at
+pycage instead — [examples](examples) shows the three-line helper for Python and
+TypeScript.
+
+The server binds to loopback and requires no token by default. Set `-token`
+before exposing it anywhere else; it is then required in `X-Access-Token`.
+
+Output is not incremental. pycage's guest returns a cell's effects when the cell
+finishes, so a client that accumulates frames sees identical results, while one
+that renders partial output watches it all land at once.
+
 ## CLI reference
 
 ```text
@@ -235,6 +280,20 @@ pycage run [options] 'python code'
   -bind-cow host=guest host-backed mount with memory-only writes; repeatable
   -timing              print setup and execution timings
   -json                print the complete structured result
+
+pycage serve [options]
+
+  -addr 127.0.0.1:49999  listen address
+  -token value           require this value in X-Access-Token
+  -max-contexts 32       maximum simultaneous Python contexts
+  -idle-timeout 10m      close a context after this much inactivity
+  -timeout 30s           execution deadline per cell
+  -memory 268435456      WebAssembly memory limit per context
+  -runtime compiler      compiler or interpreter
+  -cache-dir path        native compilation cache directory
+  -network               enable outbound TCP and HTTP for every context
+  -bind host=guest       writable host-directory mount; repeatable
+  -bind-cow host=guest   host-backed mount with memory-only writes; repeatable
 ```
 
 Compiler mode is the default. Native compiled modules are cached beneath

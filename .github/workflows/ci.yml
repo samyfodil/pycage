@@ -32,3 +32,6 @@ jobs:
           for target in darwin/arm64 darwin/amd64 windows/amd64 linux/arm64; do
             GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/pycage
           done
+      - name: Build examples
+        # Separate modules, so the root build does not cover them.
+        run: cd examples/langchain-agent && go build ./...

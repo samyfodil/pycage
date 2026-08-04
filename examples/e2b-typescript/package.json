@@ -1,0 +1,15 @@
+{
+  "name": "pycage-e2b-typescript-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@e2b/code-interpreter": "^2.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

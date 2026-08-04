@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/samyfodil/pycage"
@@ -15,11 +19,22 @@ import (
 )
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "run" {
+	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
 	}
+	switch os.Args[1] {
+	case "run":
+		runCommand(os.Args[2:])
+	case "serve":
+		serveCommand(os.Args[2:])
+	default:
+		usage()
+		os.Exit(2)
+	}
+}
 
+func runCommand(argv []string) {
 	flags := flag.NewFlagSet("pycage run", flag.ExitOnError)
 	timeout := flags.Duration("timeout", 5*time.Second, "maximum execution time")
 	memory := flags.Uint64("memory", 256<<20, "memory limit in bytes")
@@ -36,7 +51,7 @@ func main() {
 	flags.Var(&requirements, "pip", "requirement to install with embedded pip (repeatable)")
 	flags.Var(&binds, "bind", "bind host directory read-write as host[=guest] (repeatable)")
 	flags.Var(&cowBinds, "bind-cow", "bind host directory with an in-memory COW layer as host[=guest] (repeatable)")
-	flags.Parse(os.Args[2:])
+	flags.Parse(argv)
 	if flags.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "pycage: missing Python code")
 		os.Exit(2)
@@ -111,8 +126,75 @@ func main() {
 	}
 }
 
+func serveCommand(argv []string) {
+	flags := flag.NewFlagSet("pycage serve", flag.ExitOnError)
+	addr := flags.String("addr", fmt.Sprintf("127.0.0.1:%d", pycage.DefaultServerPort), "listen address")
+	token := flags.String("token", os.Getenv("PYCAGE_TOKEN"), "require this value in the X-Access-Token header")
+	maxContexts := flags.Int("max-contexts", 32, "maximum simultaneous Python contexts")
+	idleTimeout := flags.Duration("idle-timeout", 10*time.Minute, "close a context after this much inactivity")
+	timeout := flags.Duration("timeout", 30*time.Second, "maximum execution time per cell")
+	memory := flags.Uint64("memory", 256<<20, "memory limit in bytes per context")
+	runtimeMode := flags.String("runtime", "compiler", "Wazy runtime: compiler or interpreter")
+	cacheDir := flags.String("cache-dir", defaultCacheDir(), "native compilation cache directory")
+	allowNetwork := flags.Bool("network", false, "allow outbound TCP and HTTP(S) from every context")
+	var binds stringList
+	var cowBinds stringList
+	flags.Var(&binds, "bind", "bind host directory read-write as host[=guest] (repeatable)")
+	flags.Var(&cowBinds, "bind-cow", "bind host directory with an in-memory COW layer as host[=guest] (repeatable)")
+	flags.Parse(argv)
+
+	ctx := context.Background()
+	filesystem, err := bindingFileSystem(binds, cowBinds)
+	if err != nil {
+		fatal(err)
+	}
+	engine, err := pycage.NewEngine(ctx, pycage.Config{
+		Timeout:             *timeout,
+		MemoryLimitBytes:    *memory,
+		RuntimeMode:         pycage.RuntimeMode(*runtimeMode),
+		CompilationCacheDir: *cacheDir,
+		AllowNetwork:        *allowNetwork,
+		FileSystem:          filesystem,
+	})
+	if err != nil {
+		fatal(err)
+	}
+	defer engine.Close(ctx)
+
+	server := pycage.NewServer(engine, pycage.ServerConfig{
+		AccessToken: *token,
+		MaxContexts: *maxContexts,
+		IdleTimeout: *idleTimeout,
+	})
+	defer server.Close(ctx)
+
+	listener, err := net.Listen("tcp", *addr)
+	if err != nil {
+		fatal(err)
+	}
+	httpServer := &http.Server{Handler: server}
+
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-shutdown
+		graceful, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		httpServer.Shutdown(graceful)
+	}()
+
+	fmt.Fprintf(os.Stderr, "pycage serving the E2B code-interpreter API on http://%s\n", listener.Addr())
+	if *token == "" {
+		fmt.Fprintln(os.Stderr, "pycage: no -token set; anyone who can reach this address can execute code")
+	}
+	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		fatal(err)
+	}
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: pycage run [options] 'python code'
+       pycage serve [options]
 
 Options:
   -timeout 5s       maximum execution time
