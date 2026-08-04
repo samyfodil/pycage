@@ -2,7 +2,7 @@
 /dist/
 /.venv/
 /.cache/
-/guest/app.wasm
+/guest/python.wasm
 *.tmp
 __pycache__/
 *.py[cod]

@@ -15,8 +15,8 @@ bindings: .venv/bin/componentize-py
 	sed -i '$${/^$$/d;}' guest/wit_world/exports/__init__.py
 
 guest: bindings
-	.venv/bin/componentize-py -d wit -w python-sandbox componentize -p guest app -o guest/app.wasm
-	gzip -9 -n -c guest/app.wasm > guest/app.wasm.gz
+	.venv/bin/componentize-py -d wit -w python-sandbox componentize -p guest app -o guest/python.wasm
+	gzip -9 -n -c guest/python.wasm > guest/python.wasm.gz
 
 build: guest
 	mkdir -p bin

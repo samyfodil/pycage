@@ -13,7 +13,7 @@ import (
 // so the module stays `go get`-able: the raw artifact is ~55 MB, the archive
 // ~21 MB, and Go's module proxy serves whatever is committed to the tree.
 //
-//go:embed guest/app.wasm.gz
+//go:embed guest/python.wasm.gz
 var embeddedGuestGz []byte
 
 // guestComponent decompresses the embedded CPython component on first use, so

@@ -21,7 +21,7 @@ the startup and warm-call benchmarks.
 - Run `gofmt` on Go changes and `make test` before submitting.
 - Do not vendor Go modules or patch Wazy inside this repository. Required Wazy
   changes should be proposed upstream first.
-- Keep generated `.venv`, `guest/app.wasm`, and `bin/` artifacts out of commits.
+- Keep generated `.venv`, `guest/python.wasm`, and `bin/` artifacts out of commits.
 
 For security-sensitive reports, follow [SECURITY.md](SECURITY.md) instead of
 opening a public issue.
