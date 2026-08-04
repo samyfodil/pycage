@@ -38,6 +38,19 @@ With the persistent native cache enabled, an empty-cache compiler run took
 
 These numbers are a diagnostic baseline, not portable performance claims.
 
+Current numbers on the same machine (2026-08-03, `-benchtime=10x`, warm native
+cache). These supersede the table above for the warm-call rows:
+
+| Path | Wall time | Allocated bytes | Allocations |
+| --- | ---: | ---: | ---: |
+| Cached compiler sandbox | 20.8 ms | 5.68 MB | 34.1k |
+| Warm compiler `6 * 7` | 0.64 ms | 69 KB | 1.0k |
+| Warm interpreter `6 * 7` | 7.88 ms | 36 KB | 1.0k |
+
+Warm-call latency grew roughly 4x against the original baseline when the
+filesystem moved to Afero: every `RunCode` now removes, reads, and removes the
+mirrored result file through the mount stack.
+
 After the 2026-08-03 Wazy `FSConfig`/Afero migration, a 10-iteration check on
 the same machine measured 19.4 ms and 5.13 MB for a cached sandbox, 0.170 ms
 and 17.6 KB for a warm compiler cell, and 2.05 ms and 11.3 KB for a warm

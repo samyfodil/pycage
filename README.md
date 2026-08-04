@@ -4,9 +4,8 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/samyfodil/pycage.svg)](https://pkg.go.dev/github.com/samyfodil/pycage)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-An embedded Python sandbox for running AI-generated code with real CPython,
-[Wazy](https://github.com/samyfodil/wazy), WebAssembly components, and no
-Python subprocess at runtime.
+Run untrusted Python — real CPython, not a subset.
+No container. No daemon. No root. No kernel to escape.
 
 ```console
 $ ./bin/pycage run 'print("hello from CPython"); sum(i * i for i in range(10))'
@@ -14,41 +13,73 @@ hello from CPython
 285
 ```
 
-Pycage is an early prototype for E2B-like workloads that need a local,
-embeddable execution boundary. It provides stateful Python cells, memory and
-time limits, capability-gated networking, pure-Python package installation,
-and mountable Afero filesystems.
+Pycage embeds CPython as a [WebAssembly component](https://component-model.bytecodealliance.org/)
+and runs it in-process on [Wazy](https://github.com/samyfodil/wazy), a pure-Go
+Wasm runtime. It is a Go library first and a CLI second, built for agents and
+products that need to execute code they did not write.
 
-## Why pycage?
+## Why not a container?
+
+|  | pycage | container |
+| --- | --- | --- |
+| Fresh isolated sandbox | **~21 ms** (0.6 ms per warm cell) | process + image + namespace setup |
+| Runtime dependency | none — one static Go binary | daemon, root or rootless plumbing |
+| Isolation boundary | Wasm: the guest can only call host functions pycage imports | the shared host kernel |
+| Default capabilities | **none** — no network, no host FS, no subprocess | network namespace, `/proc`, caps |
+| Platforms | linux, macOS, Windows × amd64, arm64 | Linux (a VM everywhere else) |
+| Deployment | in-process, `import` it | out-of-process, orchestrate it |
+
+Startup figures are measured on Linux/amd64 (i9-12900HK) with a warm
+compilation cache; see [docs/benchmarks.md](docs/benchmarks.md) for the full
+method and the one-time cold-compile cost.
+
+### Isolation
+
+A container shares the host kernel, so isolation depends on the kernel and the
+container runtime having no exploitable bugs. A WebAssembly guest has no
+syscall interface at all: it can only call the functions the host explicitly
+imports. Pycage imports a filesystem you choose and, optionally, `wasi:http`.
+
+Everything is deny-by-default. A zero-value `pycage.Config` gives Python no
+network, no host filesystem, and no view of the machine it runs on. Subprocesses,
+shells, and native extensions aren't disabled by policy — they are not present
+in the guest to begin with.
+
+The trade is real and worth stating: the boundary you are trusting becomes
+Wazy's correctness instead of the kernel's. That is a far smaller and more
+auditable surface, but it is a different bet, not a free one. Pycage has not
+been independently audited. Wall-clock and memory are capped; CPU is not
+accounted for. For actively hostile code, keep OS-level limits underneath.
+
+## What you get
 
 - Real CPython packaged as a WebAssembly component with `componentize-py`.
-- Embedded Go API and standalone CLI; no container or remote service required.
-- Network and host filesystem access denied unless explicitly enabled.
 - Stateful cells with captured output, tracebacks, and rich results.
 - Pure-Python wheels and embedded pip with host-verified PyPI downloads.
 - HTTPS through standard `wasi:http`, backed by Go's TLS stack.
 - In-memory, host-bound, read-only, and copy-on-write Afero mounts.
-- Native Wazy compilation cache for fast repeat CLI starts.
+- Native Wazy compilation cache for fast repeat starts.
 
 ## Quick start
 
-Requirements:
-
-- Go 1.26 or newer
-- Python 3.10 or newer, needed only to build the embedded component
-- GNU Make
+As a library — the CPython component ships in the module, so this is all you
+need. Go 1.26 or newer, and no Python on the host:
 
 ```console
-git clone https://github.com/samyfodil/pycage.git
-cd pycage
-make build
-
-./bin/pycage run '6 * 7'
+go get github.com/samyfodil/pycage
 ```
 
-The first build creates `.venv`, installs the pinned `componentize-py`, builds
-`guest/app.wasm`, and embeds it in `bin/pycage`. Running the resulting binary
-does not require a host Python installation.
+As a CLI:
+
+```console
+go install github.com/samyfodil/pycage/cmd/pycage@latest
+pycage run '6 * 7'
+```
+
+To rebuild the guest component yourself you additionally need Python 3.10+ and
+GNU Make. `make build` creates `.venv`, installs the pinned `componentize-py`,
+regenerates `guest/app.wasm`, and compresses it to the `guest/app.wasm.gz` that
+is embedded in the binary.
 
 ## Packages and HTTPS
 
@@ -223,10 +254,17 @@ costs.
 
 ## Current limitations
 
-Pycage is not yet a hardened production security boundary. Run hostile code
-only with additional process-level isolation and resource controls.
-
-- Only pure-Python wheels are supported.
+- Only pure-Python wheels are supported, and a package is unreachable when any
+  transitive dependency lacks a `-none-any` wheel. MarkupSafe and pydantic-core
+  have never published one, so Jinja2, Werkzeug, Flask, and Pydantic stay out of
+  reach even though the top-level package is often pure Python itself.
+- Raw `socket` use under a denied network traps the instance rather than raising:
+  the sandbox is retired and the caller gets a Wasm stack trace. HTTP and
+  read-only filesystem denials do raise catchable Python exceptions. Sockets are
+  left structurally unwired on purpose — refusing them in a host callback would
+  be a weaker guarantee than never exposing the interface.
+- `PipInstall` restarts the CPython instance once the packages land, so Python
+  globals defined before the install do not survive it. Install first, then run.
 - CPython `_ssl`, subprocesses, native extensions, and shell commands are not
   present in the guest.
 - The requests adapter currently buffers responses and does not expose response
