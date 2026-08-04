@@ -1,11 +1,19 @@
-# pycage
+<p align="center">
+  <img src="docs/logo-mark.png" alt="" width="220">
+</p>
 
-[![CI](https://github.com/samyfodil/pycage/actions/workflows/ci.yml/badge.svg)](https://github.com/samyfodil/pycage/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/samyfodil/pycage.svg)](https://pkg.go.dev/github.com/samyfodil/pycage)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+<h1 align="center">pycage</h1>
 
-Run untrusted Python — real CPython, not a subset.
-No container. No daemon. No root. No kernel to escape.
+<p align="center">
+  <a href="https://github.com/samyfodil/pycage/actions/workflows/ci.yml"><img src="https://github.com/samyfodil/pycage/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://pkg.go.dev/github.com/samyfodil/pycage"><img src="https://pkg.go.dev/badge/github.com/samyfodil/pycage.svg" alt="Go Reference"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
+</p>
+
+<p align="center">
+  Run untrusted Python — real CPython, not a subset.<br>
+  No container. No daemon. No root. No kernel to escape.
+</p>
 
 ```console
 $ ./bin/pycage run 'print("hello from CPython"); sum(i * i for i in range(10))'
