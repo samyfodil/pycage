@@ -10,6 +10,71 @@ permissions:
 
 jobs:
   test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # No Python step: the CPython component is committed, so the module tests
+      # exactly what a `go get` consumer receives. This matrix is also what backs
+      # the cross-platform claim in the README -- it runs the sandbox, not just
+      # the compiler.
+      - name: Test
+        run: go test ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Formatting
+        run: test -z "$(gofmt -l -- *.go cmd/pycage/*.go)"
+      - name: Vet
+        # stdmethods flags aferoSysFile.Seek, which implements Wazy's sysfs
+        # interface rather than io.Seeker. See the comment on that method.
+        run: go vet -stdmethods=false ./...
+      - name: Cross-compile
+        run: |
+          for target in darwin/arm64 darwin/amd64 windows/amd64 windows/arm64 linux/arm64 linux/amd64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/pycage
+          done
+      - name: Build examples
+        # A separate module, so the root build does not cover it.
+        run: cd examples/langchain-agent && go build ./...
+
+  guest:
+    name: rebuild guest component
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Regenerates guest/python.wasm from guest/*.py with componentize-py and
+      # runs the suite against it, so a change to the guest cannot land while
+      # only the committed artifact still works.
+      - name: make test
+        run: make test
+
+  e2b-compat:
+    name: E2B SDK compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -21,17 +86,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Build guest and test
-        run: make test
-      - name: Check formatting
-        run: test -z "$(gofmt -l -- *.go cmd/pycage/*.go)"
-      - name: Vet
-        run: go vet -stdmethods=false ./...
-      - name: Cross-compile
+      - name: Install E2B's Python SDK
+        run: pip install -r examples/e2b-python/requirements.txt
+      - name: Drive pycage serve with E2B's own SDK
+        # Guards the wire format: if a frame name or the /contexts lifecycle
+        # drifts, E2B's parser stops agreeing and this fails.
         run: |
-          for target in darwin/arm64 darwin/amd64 windows/amd64 linux/arm64; do
-            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null ./cmd/pycage
+          go run ./cmd/pycage serve &
+          for _ in $(seq 1 60); do
+            curl -sf localhost:49999/health >/dev/null && break
+            sleep 2
           done
-      - name: Build examples
-        # Separate modules, so the root build does not cover them.
-        run: cd examples/langchain-agent && go build ./...
+          python examples/e2b-python/agent.py
