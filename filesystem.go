@@ -128,11 +128,16 @@ func newSandboxFilesystem(factory FileSystemFactory) (*sandboxFilesystem, wazy.F
 		}
 		seen[guestPath] = true
 		mounts = append(mounts, mountedFS{guestPath: guestPath, fs: mount.FS, readOnly: mount.ReadOnly})
+		// Read-only mounts go through the same adapter as writable ones, wrapped
+		// in Afero's ReadOnlyFs. That turns a guest write into EPERM at open
+		// time, which CPython raises as PermissionError. Mounting the io/fs.FS
+		// view instead lets the open succeed and traps later inside the stream
+		// write, killing the instance with an error Python cannot catch.
+		source := mount.FS
 		if mount.ReadOnly {
-			config = config.WithFSMount(afero.NewIOFS(mount.FS), guestPath)
-		} else {
-			config = config.WithSysFSMount(newAferoSysFS(mount.FS), guestPath)
+			source = afero.NewReadOnlyFs(source)
 		}
+		config = config.WithSysFSMount(newAferoSysFS(source), guestPath)
 	}
 	if !seen["/"] {
 		return fail(fmt.Errorf("pycage: filesystem must mount guest root %q", "/"))

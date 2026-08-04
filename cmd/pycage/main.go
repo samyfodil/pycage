@@ -36,7 +36,7 @@ func main() {
 	flags.Var(&requirements, "pip", "requirement to install with embedded pip (repeatable)")
 	flags.Var(&binds, "bind", "bind host directory read-write as host[=guest] (repeatable)")
 	flags.Var(&cowBinds, "bind-cow", "bind host directory with an in-memory COW layer as host[=guest] (repeatable)")
-	_ = flags.Parse(os.Args[2:])
+	flags.Parse(os.Args[2:])
 	if flags.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "pycage: missing Python code")
 		os.Exit(2)

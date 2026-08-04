@@ -25,6 +25,14 @@ const (
 
 var ErrClosed = errors.New("pycage: sandbox is closed")
 
+// ErrNetworkDenied is what guest HTTP sees when Config.AllowNetwork is false.
+var ErrNetworkDenied = errors.New("pycage: network access is denied; set Config.AllowNetwork")
+
+// networkDenied refuses every outgoing request without dialing.
+type networkDenied struct{}
+
+func (networkDenied) RoundTrip(*http.Request) (*http.Response, error) { return nil, ErrNetworkDenied }
+
 // Config controls host-enforced sandbox limits. Network access and host
 // filesystem access are always denied by default.
 type Config struct {
@@ -91,7 +99,7 @@ func New(ctx context.Context, config Config) (*Sandbox, error) {
 	}
 	sandbox, err := engine.NewSandbox(ctx)
 	if err != nil {
-		_ = engine.Close(ctx)
+		engine.Close(ctx)
 		return nil, err
 	}
 	sandbox.owned = true
@@ -173,7 +181,7 @@ func (e *Engine) NewSandbox(ctx context.Context) (*Sandbox, error) {
 	}
 	inst, err := e.instantiateLocked(ctx, fsConfig)
 	if err != nil {
-		_ = filesystem.close()
+		filesystem.close()
 		return nil, err
 	}
 
@@ -181,14 +189,27 @@ func (e *Engine) NewSandbox(ctx context.Context) (*Sandbox, error) {
 }
 
 func (e *Engine) instantiateLocked(ctx context.Context, fsConfig wazy.FSConfig) (*component.Instance, error) {
+	// wasi:http stays wired even when networking is denied, backed by a client
+	// that refuses every request. Leaving it unwired installs trap stubs, so the
+	// guest dies on the first HTTP call with a Wasm stack trace instead of
+	// raising an OSError the Python code can catch. Nothing reaches the network
+	// either way: AllowTCP still gates sockets and the transport never dials.
+	httpClient := e.config.HTTPClient
+	if !e.config.AllowNetwork {
+		httpClient = &http.Client{Transport: networkDenied{}}
+	}
 	options := component.WithWASI(component.WASIConfig{
 		FS:         fsConfig,
 		AllowTCP:   e.config.AllowNetwork,
-		EnableHTTP: e.config.AllowNetwork,
-		HTTPClient: e.config.HTTPClient,
+		EnableHTTP: true,
+		HTTPClient: httpClient,
 	})
 	options = append(options, component.WithCompileCache(e.cache))
-	inst, err := component.Instantiate(ctx, e.runtime, embeddedGuest, options...)
+	guest, err := guestComponent()
+	if err != nil {
+		return nil, err
+	}
+	inst, err := component.Instantiate(ctx, e.runtime, guest, options...)
 	if err != nil {
 		return nil, fmt.Errorf("pycage: instantiate CPython component: %w", err)
 	}
@@ -242,12 +263,12 @@ func (s *Sandbox) RunCode(ctx context.Context, code string) (Execution, error) {
 
 	callCtx, cancel := context.WithTimeout(ctx, s.config.Timeout)
 	defer cancel()
-	_ = s.fs.remove("/.pycage-run-result.json")
+	s.fs.remove("/.pycage-run-result.json")
 	values, err := s.inst.CallExport(callCtx, componentInterface, "run-code", code)
 	var payload string
 	if mirrored, readErr := s.fs.readFile("/.pycage-run-result.json"); readErr == nil {
 		payload = string(mirrored)
-		_ = s.fs.remove("/.pycage-run-result.json")
+		s.fs.remove("/.pycage-run-result.json")
 	}
 	if err != nil {
 		if payload != "" {
@@ -259,7 +280,7 @@ func (s *Sandbox) RunCode(ctx context.Context, code string) (Execution, error) {
 		}
 		// A trap or cancellation can close an underlying core module. Retire the
 		// whole context so a caller never accidentally reuses partial state.
-		_ = s.closeLocked(context.Background())
+		s.closeLocked(context.Background())
 		return Execution{}, fmt.Errorf("pycage: execute: %w", err)
 	}
 	if len(values) != 1 {

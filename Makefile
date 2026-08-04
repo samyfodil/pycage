@@ -16,6 +16,7 @@ bindings: .venv/bin/componentize-py
 
 guest: bindings
 	.venv/bin/componentize-py -d wit -w python-sandbox componentize -p guest app -o guest/app.wasm
+	gzip -9 -n -c guest/app.wasm > guest/app.wasm.gz
 
 build: guest
 	mkdir -p bin

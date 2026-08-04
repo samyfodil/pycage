@@ -53,11 +53,11 @@ func (a *aferoSysFS) OpenFile(name string, flag sys.Oflag, perm fs.FileMode) (sy
 	if flag&sys.O_DIRECTORY != 0 {
 		info, statErr := file.Stat()
 		if statErr != nil {
-			_ = file.Close()
+			file.Close()
 			return nil, sys.UnwrapOSError(statErr)
 		}
 		if !info.IsDir() {
-			_ = file.Close()
+			file.Close()
 			return nil, sys.ENOTDIR
 		}
 	}
@@ -152,6 +152,9 @@ func (f *aferoSysFile) Pread(buffer []byte, offset int64) (int, sys.Errno) {
 	return count, sys.UnwrapOSError(err)
 }
 
+// Seek implements Wazy's experimental sysfs File, not io.Seeker, so it returns
+// a sys.Errno. Vet's stdmethods check flags the signature; CI runs with
+// -stdmethods=false rather than reshaping an interface we do not own.
 func (f *aferoSysFile) Seek(offset int64, whence int) (int64, sys.Errno) {
 	position, err := f.file.Seek(offset, whence)
 	return position, sys.UnwrapOSError(err)
