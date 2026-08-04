@@ -25,8 +25,9 @@ Pycage is a Python sandbox for AI-generated code: give an agent somewhere to run
 what it writes without giving it your machine. It is a free, self-hosted
 alternative to E2B and the other hosted code-execution services — no account, no
 bill, no container, no VM, nothing to operate. Real CPython 3.14, stateful cells,
-package installs, and a deny-by-default capability model, as a Go library first
-and a CLI second.
+package installs, and a deny-by-default capability model — embedded in your Go
+process as a library, driven from the CLI, or run as a server that E2B's own
+Python and JS SDKs talk to unmodified.
 
 It runs as WebAssembly, in your own process, on
 [Wazy](https://github.com/samyfodil/wazy) — a pure-Go runtime with a native
