@@ -58,6 +58,11 @@ from pip._internal.commands.install import InstallCommand as _PipInstallCommand
 from pip._internal.metadata import importlib as _pip_metadata_importlib
 from pip._internal.resolution.legacy import resolver as _pip_legacy_resolver
 from pip._internal.resolution.resolvelib import resolver as _pip_resolvelib_resolver
+# main_parser reaches this one lazily, so componentize-py never sees it and a
+# guest built where pip is freshly installed raises ModuleNotFoundError on the
+# first install. Naming it is enough; do not reach for -p site-packages, which
+# resolves every such import but bundles the tree wholesale (see the Makefile).
+from pip._internal.cli import autocompletion as _pip_autocompletion
 
 from wit_world import exports
 

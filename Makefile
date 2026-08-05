@@ -21,14 +21,20 @@ bindings: .venv/bin/componentize-py
 	cp -R "$$bindings_dir"/. guest/
 	sed -i '$${/^$$/d;}' guest/wit_world/exports/__init__.py
 
+# Do not add site-packages as a second -p. It looks like the fix for
+# "ModuleNotFoundError: No module named 'pip'" on a machine where pip is not
+# ambient, and it does resolve that -- but -p means "bundle this tree
+# wholesale", not "search here". The component grows from 57 MB to 64 MB, and
+# the oversized result traps inside CPython's garbage collector partway through
+# a real multi-package install:
+#
+#   wasm error: indirect call type mismatch
+#   libpython3.14.so.gc_collect_region -> _PyGC_Collect
+#
+# It passes every test in the suite while doing so, because those install one
+# small local wheel. See TestEmbeddedPipInstallsWithDependenciesFromPyPI.
 guest: bindings
-	# site-packages is on the module path explicitly: without it componentize-py
-	# resolves the guest's `import pip._internal` only when the ambient
-	# environment happens to expose pip, which fails on a clean machine.
-	.venv/bin/componentize-py -d wit -w python-sandbox componentize \
-		-p guest \
-		-p "$$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')" \
-		app -o guest/python.wasm
+	.venv/bin/componentize-py -d wit -w python-sandbox componentize -p guest app -o guest/python.wasm
 	gzip -9 -n -c guest/python.wasm > guest/python.wasm.gz
 
 build: guest
