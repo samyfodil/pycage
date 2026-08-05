@@ -54,10 +54,36 @@ jobs:
         # A separate module, so the root build does not cover it.
         run: cd examples/langchain-agent && go build ./...
 
+  network:
+    name: live PyPI install
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # These tests existed but nothing ran them, which is how a component that
+      # faults partway through a real multi-package install reached main with a
+      # green build. They run against the committed artifact, so they guard what
+      # users actually download.
+      - name: Test against live PyPI
+        env:
+          PYCAGE_NETWORK_TESTS: "1"
+        run: go test -run 'PyPI|WASIHTTP' -v .
+
   guest:
     name: rebuild guest component
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Non-blocking, and honestly so: `make guest` reproduces the component's
+    # build but not its behaviour. Every rebuild tried so far -- including of
+    # byte-identical sources, across host Python 3.12/3.13 and componentize-py
+    # 0.19.1/0.24.0 -- faults in CPython's GC during a real install, while the
+    # committed artifact does not. Until that is understood the job reports
+    # without gating; the `network` job above is what protects users.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

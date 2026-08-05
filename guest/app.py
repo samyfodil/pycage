@@ -58,18 +58,6 @@ from pip._internal.commands.install import InstallCommand as _PipInstallCommand
 from pip._internal.metadata import importlib as _pip_metadata_importlib
 from pip._internal.resolution.legacy import resolver as _pip_legacy_resolver
 from pip._internal.resolution.resolvelib import resolver as _pip_resolvelib_resolver
-# pip reaches these only through lazy or conditional imports, so componentize-py
-# never sees them and a guest rebuilt on a clean machine raises
-# ModuleNotFoundError on the first install. Naming them here is what puts them
-# in python.wasm.
-#
-# Build with Python 3.13. componentize-py resolves these against the *host*
-# interpreter, and on 3.12 pkg_resources resolves to a variant that wants
-# importlib.resources._adapters, which the guest's CPython 3.14 dropped.
-from pip._internal.cli import autocompletion as _pip_autocompletion
-from pip._internal.metadata import pkg_resources as _pip_metadata_pkg_resources
-from pip._vendor import distro as _pip_vendor_distro
-from pip._vendor import pkg_resources as _pip_vendor_pkg_resources
 
 from wit_world import exports
 
